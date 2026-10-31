@@ -128,6 +128,9 @@ pub const Source = union(enum) {
     cooked: struct { data: []const u8, mode: cooked_sector.CookedMode },
     /// An ECM image, decoded on demand; the reader is owned by the caller.
     ecm: *ecm.Reader,
+    /// A flat image with `stride` bytes a sector, the first 2352 of them the
+    /// sector and the rest subchannel, which is skipped. Owned by the caller.
+    strided: struct { data: []const u8, stride: u16 },
     /// One disc of an eboot, inflated on demand; the reader is owned by the caller.
     pbp: *pbp.Reader,
 };
@@ -227,6 +230,7 @@ pub const Disc = struct {
         return switch (self.source) {
             .flat => |data| @intCast(data.len / constants.sector_bytes),
             .chd => |reader| reader.sectorCount(),
+            .strided => |st| @intCast(st.data.len / st.stride),
             .cooked => |c| @intCast(c.data.len / c.mode.bytes()),
             .ecm => |reader| reader.sectorCount(),
             .pbp => |reader| reader.sectorCount(),
@@ -379,6 +383,12 @@ pub const Disc = struct {
             .chd => |reader| return reader.readSector(lba, buffer),
             .ecm => |reader| return reader.readSector(lba, buffer),
             .pbp => |reader| return reader.readSector(lba, buffer),
+            .strided => |st| {
+                const offset = @as(usize, @intCast(lba)) * st.stride;
+                if (offset + constants.sector_bytes > st.data.len) return false;
+                @memcpy(buffer, st.data[offset..][0..constants.sector_bytes]);
+                return true;
+            },
             .flat => |data| {
                 const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
                 if (offset + constants.sector_bytes > data.len) return false;

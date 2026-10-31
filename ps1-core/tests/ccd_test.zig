@@ -203,3 +203,12 @@ test "[Disc] may come after the entries" {
     try expectEqual(@as(u8, 2), got.track_count);
     try expectEqual(@as(i32, 40), got.tracks[1].start_lba);
 }
+
+test "deinterleaveQ unpacks bit 6 of each byte" {
+    const q = [12]u8{ 0x41, 0x01, 0x01, 0, 0, 0, 0, 0x00, 0x02, 0x00, 0x28, 0x32 };
+    var pw: [96]u8 = @splat(0xFF);
+    for (q, 0..) |byte, j| for (0..8) |k| {
+        if (byte >> @intCast(7 - k) & 1 == 0) pw[j * 8 + k] &= ~@as(u8, 0x40);
+    };
+    try std.testing.expectEqualSlices(u8, &q, &ccd.deinterleaveQ(&pw));
+}

@@ -238,3 +238,19 @@ test "a cooked cue's INDEX offset places the track, not the bytes" {
     try expectEqual(@as(u8, 3), raw[0x10]);
     try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x02, 0x02 }, raw[12..15]);
 }
+
+test "a strided image reads its 2352 bytes and skips the subchannel" {
+    const gpa = std.testing.allocator;
+    const sectors = raw_bin.len / 2352;
+    const s = try gpa.alloc(u8, sectors * 2448);
+    defer gpa.free(s);
+    for (0..sectors) |i| {
+        @memcpy(s[i * 2448 ..][0..2352], raw_bin[i * 2352 ..][0..2352]);
+        @memset(s[i * 2448 + 2352 ..][0..96], 0xEE);
+    }
+    const d = disc.Disc{ .source = .{ .strided = .{ .data = s, .stride = 2448 } } };
+    try expectEqual(@as(i32, 113), d.sectorCount());
+    var buf: [2352]u8 = undefined;
+    try std.testing.expect(d.readSector2352(60, &buf));
+    try std.testing.expectEqualSlices(u8, raw_bin[60 * 2352 ..][0..2352], &buf);
+}

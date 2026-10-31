@@ -42,19 +42,17 @@ pub fn qCrc(q: *const [q_bytes]u8) u16 {
     return ~crc;
 }
 
-/// An sbi-shaped buffer holding every sector from `skip` on whose stored Q
-/// fails its CRC, addressed from the sector `skip` is LBA 0 of. The caller
-/// owns the result.
-pub fn subRecords(gpa: std.mem.Allocator, sub: []const u8, skip: usize) error{ OutOfMemory, BadCcd }![]u8 {
-    if (sub.len % sub_sector_bytes != 0) return error.BadCcd;
+/// An sbi-shaped buffer holding every sector from `skip` on whose Q fails its
+/// CRC, addressed from the sector `skip` is LBA 0 of. `ctx.q(i)` is sector
+/// `i`'s Q with its CRC, however the image stores it. The caller owns the result.
+pub fn qRecords(gpa: std.mem.Allocator, sectors: usize, skip: usize, ctx: anytype) error{OutOfMemory}![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, disc.sbi_magic);
-    const count = sub.len / sub_sector_bytes;
-    for (@min(skip, count)..count) |i| {
-        const q = sub[i * sub_sector_bytes + q_offset ..][0 .. q_bytes + 2];
+    for (@min(skip, sectors)..sectors) |i| {
+        const q = ctx.q(i);
         // A dump without subchannel data is all zero; that is absence, not corruption.
-        if (std.mem.allEqual(u8, q, 0)) continue;
+        if (std.mem.allEqual(u8, &q, 0)) continue;
         const stored = (@as(u16, q[q_bytes]) << 8) | q[q_bytes + 1];
         if (qCrc(q[0..q_bytes]) == stored) continue;
         const msf = MSF.fromLba(@intCast(i - skip));
@@ -62,6 +60,30 @@ pub fn subRecords(gpa: std.mem.Allocator, sub: []const u8, skip: usize) error{ O
         try out.appendSlice(gpa, q[0..q_bytes]);
     }
     return out.toOwnedSlice(gpa);
+}
+
+/// The Q channel of one 96-byte subchannel block stored interleaved (P..W,
+/// one bit of each channel per byte, P in bit 7 and Q in bit 6): Q byte `j`
+/// bit `7 - k` is bit 6 of byte `j * 8 + k`.
+pub fn deinterleaveQ(pw: *const [sub_sector_bytes]u8) [q_bytes + 2]u8 {
+    var q: [q_bytes + 2]u8 = @splat(0);
+    for (pw, 0..) |byte, n| q[n / 8] |= ((byte >> 6) & 1) << @intCast(7 - n % 8);
+    return q;
+}
+
+/// Sector `i` of a `.sub`, whose Q sits deinterleaved at `q_offset`.
+const SubView = struct {
+    sub: []const u8,
+
+    fn q(self: SubView, i: usize) [q_bytes + 2]u8 {
+        return self.sub[i * sub_sector_bytes + q_offset ..][0 .. q_bytes + 2].*;
+    }
+};
+
+/// `qRecords` over a CloneCD `.sub`.
+pub fn subRecords(gpa: std.mem.Allocator, sub: []const u8, skip: usize) error{ OutOfMemory, BadCcd }![]u8 {
+    if (sub.len % sub_sector_bytes != 0) return error.BadCcd;
+    return qRecords(gpa, sub.len / sub_sector_bytes, skip, SubView{ .sub = sub });
 }
 
 const Entry = struct {
