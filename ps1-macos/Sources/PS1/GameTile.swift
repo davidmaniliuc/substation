@@ -33,15 +33,14 @@ struct GameTile: View {
     private static let corner = Design.Radius.tile
     private static let dragPreviewSide: CGFloat = 150
     private static let selectionWidth: CGFloat = 3
-    /// Enough stamps that the ring shows no scallops at `selectionWidth`.
-    private static let contourStamps = 16
+    /// How far a cut-out's selection highlight reaches past its square.
+    private static let highlightInset: CGFloat = 6
 
     var body: some View {
         let image = coverURL.flatMap(NSImage.init(contentsOf:))
         let cutOut = image.map(CoverShape.isCutOut) ?? false
         VStack(alignment: .leading, spacing: 6) {
             framed(art(image), cutOut: cutOut)
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
                 // The payload is the title, never the file URL: a file URL
                 // dropped on Finder copies a disc image of hundreds of
                 // megabytes. Nothing in the app accepts the drop, so letting
@@ -93,27 +92,22 @@ struct GameTile: View {
     /// A flat scan is clipped and outlined as a square. A cut-out (a 3D case)
     /// is drawn as its own shape: the square around it is empty, so a clip,
     /// hairline or ring on it outlines nothing but the grid. Its selection is
-    /// a contour instead: the tint, masked by the case's alpha, stamped in a
-    /// ring around it and drawn underneath. A shadow follows the alpha too,
-    /// but blurs it into a glow; the stamps keep the edge as hard as the
-    /// flat cover's ring, at the same width.
+    /// a soft rounded highlight behind the square, as Finder selects an icon.
+    /// A ring traced round the case's alpha read as a coloured slab under
+    /// it. The shadow goes on the art alone, never on the highlight.
     @ViewBuilder
     private func framed(_ art: some View, cutOut: Bool) -> some View {
         let square = art.aspectRatio(Self.aspect, contentMode: .fit)
         if cutOut {
-            square.background {
-                if isSelected {
-                    ZStack {
-                        ForEach(0..<Self.contourStamps, id: \.self) { i in
-                            let angle = Double(i) / Double(Self.contourStamps) * 2 * .pi
-                            Rectangle().fill(.tint)
-                                .mask(square)
-                                .offset(x: Self.selectionWidth * cos(angle),
-                                        y: Self.selectionWidth * sin(angle))
-                        }
+            square
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: Self.corner + Self.highlightInset)
+                            .fill(.tint.opacity(0.25))
+                            .padding(-Self.highlightInset)
                     }
                 }
-            }
         } else {
             square
                 .clipShape(.rect(cornerRadius: Self.corner))
@@ -124,6 +118,7 @@ struct GameTile: View {
                                       : AnyShapeStyle(.primary.opacity(0.08)),
                                       lineWidth: isSelected ? Self.selectionWidth : 1)
                 }
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
         }
     }
 
