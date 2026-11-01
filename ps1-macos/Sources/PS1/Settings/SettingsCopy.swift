@@ -19,12 +19,12 @@ enum SettingsCopy {
 
     static let cpuOverclock = SettingInfo(
         title: "Clock Speed Control",
-        description: "Runs the console's processor faster or slower while video and sound keep real time. Higher values can smooth out games that slow down, and cost more of your Mac's processor."
+        description: "Runs the console's processor faster or slower. Higher values can smooth out games that slow down."
     )
 
     static let cpuOverclockPercent = SettingInfo(
         title: "Clock Speed",
-        description: "The processor's speed as a percentage of the real console's. Some games misbehave away from 100%."
+        description: "Some games misbehave away from 100%."
     )
 
     static let runahead = SettingInfo(
