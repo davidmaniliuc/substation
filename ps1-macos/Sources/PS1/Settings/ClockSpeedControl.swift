@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The clock as a slider over the whole range with a stepper beside it for
-/// one step at a time and the exact value, as the HIG pairs them for a wide
-/// range. Not a menu: a hundred rows is no way to pick a number.
+/// The clock as a slider over the whole range with its value beside it.
+/// Not a menu: a hundred rows is no way to pick a number. The slider takes
+/// no `step`, because AppKit draws a tick per step and a hundred of them
+/// read as a line; the binding rounds to the setting's step instead.
 struct ClockSpeedControl: View {
     @Binding var percent: Int
 
@@ -10,22 +11,16 @@ struct ClockSpeedControl: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Slider(value: sliderValue, in: Self.range, step: 10) {
+            Slider(value: sliderValue, in: Self.range) {
                 Text(SettingsCopy.cpuOverclockPercent.title)
-            } minimumValueLabel: {
-                Text("10%")
-            } maximumValueLabel: {
-                Text("1000%")
             }
             .labelsHidden()
             .frame(minWidth: 180)
-
-            Stepper(value: $percent, in: CpuOverclockSetting.choices.first!...CpuOverclockSetting.choices.last!, step: 10) {
-                Text("\(percent)%")
-                    .monospacedDigit()
-                    .frame(minWidth: 44, alignment: .trailing)
-            }
             .accessibilityValue("\(percent) percent")
+
+            Text("\(percent)%")
+                .monospacedDigit()
+                .frame(minWidth: 48, alignment: .trailing)
         }
     }
 
