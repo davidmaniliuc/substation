@@ -21,6 +21,17 @@ struct SettingsCopyTests {
         }
     }
 
+    /// A description is the one short line under a setting's title, as
+    /// System Settings writes it: one sentence, two at most. A paragraph
+    /// explaining every option belongs nowhere in the window.
+    @Test func descriptionsAreShort() {
+        for info in SettingsCopy.allInfo {
+            if let text = info.description {
+                #expect(text.count <= 120, "too long (\(text.count) characters) in \(info.title): \(text)")
+            }
+        }
+    }
+
     @Test func titlesAreUnique() {
         let titles = SettingsCopy.allInfo.map(\.title)
         #expect(Set(titles).count == titles.count)

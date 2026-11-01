@@ -61,7 +61,7 @@ enum SettingsCopy {
 
     static let gameWindow = SettingInfo(
         title: "Open Games In",
-        description: "New Window keeps every game you open in a window of its own. Only the game in front plays; the others wait paused. Each open game keeps its whole console in memory, and its rewind history too when Rewind is on."
+        description: "Only the game in front plays; the others wait paused."
     )
 
     static let gameWindowFullScreen = SettingInfo(
