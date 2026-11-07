@@ -71,7 +71,7 @@ struct GeneralSettingsPane: View {
                     HStack {
                         Image(systemName: "speaker.fill").foregroundStyle(.secondary)
                         Slider(value: $model.volume, in: VolumeSetting.range)
-                            .frame(width: 140)
+                            .frame(width: Design.Size.trailingControl)
                         Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
                     }
                 }

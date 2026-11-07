@@ -13,6 +13,11 @@ struct BadgeStack: View {
     @Bindable var model: EmulatorViewModel
     @Bindable var game: OpenGame
 
+    private var showsBadges: Bool {
+        model.effectiveSpeed > 1 || model.cpuOverclock(for: game) != 100
+            || game.isRewinding || game.savingToMemoryCard || game.notice != nil
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: Design.Spacing.s) {
             if model.effectiveSpeed > 1 {
@@ -25,7 +30,8 @@ struct BadgeStack: View {
             }
             if game.isRewinding {
                 Badge(icon: "backward.fill",
-                      text: String(format: "%.0f s", game.rewindSecondsLeft.rounded(.down)))
+                      text: Duration.seconds(Int(game.rewindSecondsLeft))
+                          .formatted(.units(allowed: [.seconds], width: .narrow)))
                     .accessibilityLabel("Rewinding, \(Int(game.rewindSecondsLeft)) seconds left")
             }
             if game.savingToMemoryCard {
@@ -34,6 +40,17 @@ struct BadgeStack: View {
             }
             if let notice = game.notice { NoticeBadge(notice: notice) }
         }
+        // A soft dim under the column so the badges read on a bright frame;
+        // an empty column has no size, so nothing is drawn without a badge.
+        .background {
+            if showsBadges {
+                EllipticalGradient(colors: [Design.Dim.band, .clear])
+                    .padding(-Design.Spacing.xxxl)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: showsBadges)
         .animation(.snappy(duration: 0.25), value: model.effectiveSpeed)
         .animation(.snappy(duration: 0.25), value: game.isRewinding)
         .animation(.snappy(duration: 0.25), value: game.savingToMemoryCard)

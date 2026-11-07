@@ -134,7 +134,7 @@ private struct PanelContent: View {
             if let offer = model.resumeOffer {
                 ResumePrompt(model: model, offer: offer)
                     .dialogSurface()
-                    .padding(48)
+                    .padding(Design.Spacing.shadowMargin)
                     .fixedSize()
             }
         }

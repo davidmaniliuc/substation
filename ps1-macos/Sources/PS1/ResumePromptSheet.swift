@@ -31,10 +31,12 @@ struct ResumePromptSheet: View {
     private static let column: CGFloat = 270
     private static let spacing = Design.Spacing.xl
     private static let padding = Design.Spacing.dialog
+    /// The hero and the list beside it are siblings in one card: one step.
+    private static let insetRadius = Design.Radius.panel
     /// The column alone, wide enough for the footer's three buttons.
     private static let compactColumn: CGFloat = 360
     /// What the dialog leaves clear of the window's edges.
-    private static let margin: CGFloat = 24
+    private static let margin = Design.Spacing.xxl
     private static let wideWidth = padding * 2 + hero + spacing + column
 
     /// Whether a window this wide has room for the screenshot.
@@ -99,7 +101,7 @@ struct ResumePromptSheet: View {
         ZStack {
             if let source = selected?.source {
                 StateScreenshot(image: thumbnails[source],
-                                radius: Design.Radius.panel)
+                                radius: Self.insetRadius)
                     .id(source)
                     .transition(.opacity)
             }
@@ -152,7 +154,7 @@ struct ResumePromptSheet: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .alternatingRowBackgrounds(.disabled)
-        .background(InsetFill(), in: Design.cardShape(Design.Radius.row))
+        .background(InsetFill(), in: Design.cardShape(Self.insetRadius))
         .background(ListFocus(isFocused: pendingDelete == nil))
         .contextMenu(forSelectionType: StateSource.self) { sources in
             if let source = sources.first {
@@ -186,7 +188,7 @@ struct ResumePromptSheet: View {
                 Spacer(minLength: 0)
                 buttons
             }
-            .padding(.horizontal, Design.Spacing.dialog)
+            .padding(.horizontal, Self.padding)
             .padding(.vertical, Design.Spacing.m)
             // An explicit rectangle: with no shape, the fill takes the
             // card's rounded shape and the strip grows corners of its own
@@ -313,7 +315,7 @@ private struct HoverOutline: ButtonStyle {
                                            : AnyShapeStyle(.clear)))
                 .overlay(Capsule().strokeBorder(.separator, lineWidth: 1).opacity(active ? 1 : 0))
                 .contentShape(Capsule())
-                .opacity(isEnabled ? 1 : 0.45)
+                .opacity(isEnabled ? 1 : Design.disabledOpacity)
                 .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
         }
     }

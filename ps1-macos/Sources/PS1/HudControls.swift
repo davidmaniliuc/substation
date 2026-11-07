@@ -13,7 +13,7 @@ enum SpeedPick {
     static let seat: CGFloat = 30
     static let separator: CGFloat = Design.Spacing.s
     /// The bar's vertical padding, between the button and the bar's edge.
-    static let barPad: CGFloat = 10
+    static let barPad: CGFloat = Design.Spacing.m
     /// How far the tab rises above the bar's top edge.
     static let rise: CGFloat = 4 * slot + separator + pad - barPad
     /// How far the pointer may stray beyond the tab before it closes.
@@ -62,15 +62,16 @@ struct PressStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .background(Circle()
-                    .fill(configuration.isPressed ? Design.Dim.scrim : .clear)
-                    .frame(width: IconButton.height, height: IconButton.height))
-                .opacity(isEnabled ? 1 : 0.45)
+                .background(Capsule()
+                    .fill(configuration.isPressed ? Design.Dim.press : .clear)
+                    .frame(width: IconButton.width, height: IconButton.height))
+                .opacity(isEnabled ? 1 : Design.disabledOpacity)
         }
     }
 }
 
-/// One of the bar's buttons: 32×30, wide enough for its press disc. The
+/// One of the bar's buttons: 32×30, a capsule for both its hit area and its
+/// press fill. The
 /// speaker's seat is the same width so the pitch around it stays even.
 struct IconButton: View {
     static let width: CGFloat = 32
@@ -78,14 +79,13 @@ struct IconButton: View {
 
     let symbol: String
     let help: String
-    var font: Font = .title3
     let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(font.weight(.medium))
+                .font(.title3.weight(.medium))
                 .symbolVariant(.fill)
                 // Animated on the symbol itself: pause and full screen
                 // change from keys and menus too, outside any transaction.

@@ -60,9 +60,9 @@ struct OnboardingView: View {
                 Text("You can change these later in Settings.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Spacer()
+                Spacer(minLength: Design.Spacing.s)
                 Button("Open Library") { model.finishOnboarding() }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!model.onboardingReady)
@@ -70,7 +70,7 @@ struct OnboardingView: View {
             .padding(.bottom, Design.Spacing.xxl)
         }
         .frame(maxWidth: 460)
-        .padding(.horizontal, 32)
+        .padding(.horizontal, Design.Spacing.xxxl)
     }
 
     private var biosStatus: FolderRow.Status {
@@ -100,9 +100,9 @@ private struct FolderRow: View {
             HStack(spacing: Design.Spacing.m) {
                 Image(systemName: symbol)
                     .font(.title3)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
-                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.tile))
+                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.thumbnail))
                 VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                     Text(title).font(.headline)
                     Group {
@@ -118,7 +118,7 @@ private struct FolderRow: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: Design.Spacing.s)
                 if folder != nil { badge }
             }
             .padding(.horizontal, Design.Spacing.m)
@@ -240,7 +240,7 @@ private struct OnboardingPreview: View {
                 Label {
                     HStack {
                         Text(group.title).lineLimit(1)
-                        Spacer(minLength: 4)
+                        Spacer(minLength: Design.Spacing.xs)
                         if !model.isSurveyingBios, let region = model.missingBios(for: group.first) {
                             missingBios(region)
                         }

@@ -44,7 +44,7 @@ struct GameHUD: View {
         ZStack(alignment: .trailing) {
             HStack(spacing: spacing) {
                 IconButton(symbol: game.showsPaused ? "play.fill" : "pause.fill",
-                           help: game.showsPaused ? "Play" : "Pause", font: .title2) {
+                           help: game.showsPaused ? "Play" : "Pause") {
                     game.togglePause()
                 }
                 SaveStatesButton(model: model, game: game)
@@ -169,7 +169,8 @@ struct SaveStatesButton: View {
     }
 
     var body: some View {
-        IconButton(symbol: "rectangle.stack", help: "Save States") {
+        IconButton(symbol: "rectangle.stack",
+                   help: game.canUseStates ? "Save States" : "Save States are unavailable right now") {
             if game.isOpen(.saveStates) {
                 game.setSurface(.saveStates, open: false)
             } else {

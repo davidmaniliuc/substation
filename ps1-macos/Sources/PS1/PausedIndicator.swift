@@ -8,8 +8,6 @@ import SwiftUI
 struct PausedIndicator: View {
     @Bindable var model: EmulatorViewModel
     @Bindable var game: OpenGame
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         Button {
             game.resume()
@@ -22,7 +20,9 @@ struct PausedIndicator: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .glassEffect(reduceMotion ? .regular : .regular.interactive(), in: .circle)
+        .glassEffect(.regular.interactive(), in: .circle)
+        // Under the glass: the picture behind a bright frame would wash it out.
+        .background(Circle().fill(Design.Dim.scrim))
         .help("Resume")
         .accessibilityLabel("Paused. Resume")
     }

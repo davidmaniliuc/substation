@@ -17,18 +17,19 @@ struct ConfirmExitSheet: View {
             Toggle("Save state for resume", isOn: $saveState)
                 .toggleStyle(.checkbox)
             HStack(spacing: Design.Spacing.buttonGap) {
-                Button(action: cancel) { Text("Cancel").frame(minWidth: 84, maxWidth: .infinity) }
+                Button(action: cancel) { Text("Cancel").frame(minWidth: Design.Size.dialogButton, maxWidth: .infinity) }
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(.bordered)
-                Button(action: confirm) { Text(intent.verb).frame(minWidth: 84, maxWidth: .infinity) }
+                Button(action: confirm) { Text(intent.verb).frame(minWidth: Design.Size.dialogButton, maxWidth: .infinity) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }
+            .buttonBorderShape(.capsule)
             .fixedSize()
             .controlSize(.large)
         }
         .padding(Design.Spacing.dialog)
-        .frame(width: 340)
+        .frame(width: Design.Size.card)
     }
 }
 

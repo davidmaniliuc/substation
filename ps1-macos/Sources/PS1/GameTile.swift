@@ -32,10 +32,9 @@ struct GameTile: View {
     private static let aspect: CGFloat = 1
     private static let corner = Design.Radius.tile
     private static let dragPreviewSide: CGFloat = 150
-    private static let selectionWidth: CGFloat = 3
     /// A cut-out's selection highlight sits `highlightInset` past its
     /// square, concentric with it, on the scale's next step up.
-    private static let highlightRadius = Design.Radius.alert
+    private static let highlightRadius = Design.Radius.tileHighlight
     private static let highlightInset = highlightRadius - corner
 
     var body: some View {
@@ -108,7 +107,7 @@ struct GameTile: View {
                 .background {
                     if isSelected {
                         Design.cardShape(Self.highlightRadius)
-                            .fill(.tint.opacity(0.25))
+                            .fill(.tint.tertiary)
                             .padding(-Self.highlightInset)
                     }
                 }
@@ -122,9 +121,9 @@ struct GameTile: View {
                 // covers the cover and its inner corner matches the cover's.
                 .overlay {
                     if isSelected {
-                        Design.cardShape(Self.corner + Self.selectionWidth)
-                            .strokeBorder(.tint, lineWidth: Self.selectionWidth)
-                            .padding(-Self.selectionWidth)
+                        Design.cardShape(Self.corner + Design.Focus.selectionWidth)
+                            .strokeBorder(.tint, lineWidth: Design.Focus.selectionWidth)
+                            .padding(-Design.Focus.selectionWidth)
                     }
                 }
                 .designShadow(.tile)

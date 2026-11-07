@@ -140,7 +140,7 @@ struct LibraryView: View {
             }
         }
         .padding(.horizontal, Self.contentInset)
-        .frame(height: 44)
+        .frame(minHeight: 44)
     }
 
     /// "No Results" under a search; under an empty tab, what fills it.
@@ -176,8 +176,6 @@ struct LibraryView: View {
                 // Material, not glass: the banner floats over the covers in
                 // the content layer, where glass is reserved for controls.
                 .background(.regularMaterial, in: .capsule)
-                .overlay { Capsule().strokeBorder(.separator) }
-                .designShadow(.thumbnail)
                 .accessibilityElement(children: .combine)
                 .padding(Self.contentInset)
             }
@@ -279,7 +277,7 @@ struct LibraryView: View {
             Text("A game is a .cue, .chd, .ccd, .mds, .pbp or .ecm file, or a .bin, .iso or .img in a folder with no .cue. Subfolders are scanned too.")
         } actions: {
             Button("Choose Games Folder…", action: chooseFolder)
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.borderedProminent)
         }
     }
 }
@@ -298,6 +296,5 @@ private struct LibraryHints: View {
             }
         }
         .padding(.horizontal, inset)
-        .frame(height: 30)
     }
 }

@@ -51,7 +51,7 @@ struct ConfirmCard: View {
     @ViewBuilder private func button(_ i: Int) -> some View {
         let spec = buttons[i]
         let base = Button(role: spec.destructive ? .destructive : nil) { press(i) } label: {
-            Text(spec.title).frame(minWidth: 84, maxWidth: .infinity)
+            Text(spec.title).frame(minWidth: Design.Size.dialogButton, maxWidth: .infinity)
         }
         Group {
             if i == highlighted && !spec.destructive && spec.title != "Cancel" {
@@ -60,7 +60,8 @@ struct ConfirmCard: View {
                 base.buttonStyle(.bordered)
             }
         }
-        .focusRing(showsFocus && i == highlighted, cornerRadius: Design.Radius.dialog)
+        .focusRing(showsFocus && i == highlighted, in: Capsule())
+        .buttonBorderShape(.capsule)
     }
 
     /// Escape as an unseen button. Return is the highlighted button's when
@@ -89,7 +90,7 @@ struct ConfirmScrim<Card: View>: View {
 
     var body: some View {
         ZStack {
-            Design.cardShape(cornerRadius).fill(Design.Dim.scrim)
+            Design.cardShape(cornerRadius).fill(Design.Dim.light)
                 .onTapGesture(perform: cancel)
             card
         }

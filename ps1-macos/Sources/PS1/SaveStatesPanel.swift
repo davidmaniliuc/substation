@@ -29,7 +29,7 @@ struct SaveStatesPanel: View {
             }
         }
         .padding(.top, Design.Spacing.xs)
-        .frame(width: 340)
+        .frame(width: Design.Size.card)
         .overlay {
             if let sheet = nav?.sheet {
                 // The popover clips the dimming to its own shape.
@@ -94,16 +94,15 @@ private struct StateRow: View {
             VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                 Text(source.title).font(.body.weight(.medium))
                 Text(savedLine(source, info)).font(.caption)
-                    .foregroundStyle(selected
-                        ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
-                        : AnyShapeStyle(.secondary))
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
         // The system's selected-row colours, which keep their contrast on
-        // any accent.
+        // any accent; the subtitle's `.secondary` derives from them.
         .foregroundStyle(selected ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
                          : AnyShapeStyle(.primary))
+        .environment(\.backgroundProminence, selected ? .increased : .standard)
         .padding(.horizontal, Panel.rowPadding).padding(.vertical, Design.Spacing.xs)
         // A list's selection: the accent fill. Hover only brightens.
         .background(Design.cardShape(Design.Radius.row)
@@ -115,7 +114,7 @@ private struct StateRow: View {
         .simultaneousGesture(TapGesture().onEnded(select))
         .onHover { h in withAnimation(.easeOut(duration: 0.1)) { hover = h } }
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
+        .opacity(enabled ? 1 : Design.disabledOpacity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { activate() }
@@ -136,16 +135,18 @@ private struct StateRow: View {
 
 private struct StateThumbnail: View {
     let url: URL?
+    /// Concentric with the row's highlight, `Design.Spacing.xs` inside it.
+    private let radius = Design.concentric(Design.Radius.row, inset: Design.Spacing.xs)
 
     var body: some View {
         ZStack {
             if let url, let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().interpolation(.high)
-                    .clipShape(Design.cardShape(Design.Radius.thumbnail))
+                    .clipShape(Design.cardShape(radius))
                     // The hairline system thumbnails carry, so a dark frame keeps its edge.
-                    .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+                    .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: 0.5))
             } else {
-                Design.cardShape(Design.Radius.thumbnail).fill(.fill.quaternary)
+                Design.cardShape(radius).fill(.fill.quaternary)
             }
         }
     }
@@ -179,13 +180,10 @@ private struct StateBar: View {
                 base.buttonStyle(.bordered)
             }
         }
-        .focusRing(showsFocus && b == highlighted && b != buttons.last, cornerRadius: Self.capsuleRadius)
+        .focusRing(showsFocus && b == highlighted && b != buttons.last, in: Capsule())
         // One shape for every button, so the ring can follow it.
         .buttonBorderShape(.capsule)
     }
-
-    /// Past half a button's height, which makes the ring a capsule.
-    private static let capsuleRadius: CGFloat = 40
 
     static func title(_ b: StateButton) -> String {
         switch b {

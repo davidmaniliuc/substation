@@ -70,8 +70,7 @@ struct AboutView: View {
                 .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
             Text("Substation")
-                .font(.title2)
-                .bold()
+                .font(.title2.weight(.semibold))
                 .padding(.top, Design.Spacing.s)
             Text("A native PlayStation emulator for the Mac.")
                 .font(.callout)
@@ -84,8 +83,8 @@ struct AboutView: View {
             Button("GitHub") { openURL(BuildInfo.repository) }
                 .padding(.top, Design.Spacing.xl)
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 36)
+        .padding(.horizontal, Design.Spacing.xxxl)
+        .padding(.top, Design.Spacing.xxxl)
         .padding(.bottom, Design.Spacing.xl)
         .frame(width: 260)
         // The desktop shows through, as in Finder's About window.

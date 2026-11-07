@@ -106,7 +106,7 @@ struct ContinueButton: View {
                 .padding(.trailing, Design.Spacing.xxs)
                 Image(systemName: "play.fill")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
                     .frame(width: Self.side, height: Self.side)
                     .background(.tint, in: .circle)
             }

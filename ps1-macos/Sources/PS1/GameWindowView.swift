@@ -47,6 +47,15 @@ struct GameScreen: View {
                     .opacity(chrome ? 1 : 0)
                     .animation(.easeInOut(duration: 0.25), value: chrome)
 
+                // Under the bar so it reads on a bright frame: the bar's
+                // height and bottom padding, and a little more to fade out.
+                LinearGradient(colors: [Design.Dim.band, .clear], startPoint: .bottom, endPoint: .top)
+                    .frame(height: IconButton.height + 2 * SpeedPick.barPad + Design.Spacing.xxl + Design.Spacing.xl)
+                    .ignoresSafeArea(edges: .bottom)
+                    .opacity(chrome ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: chrome)
+                    .allowsHitTesting(false)
+
                 GameHUD(model: model, game: game, isVisible: chrome, isFullScreen: settledFullScreen)
                     .padding(.bottom, Design.Spacing.xxl)
 
@@ -67,7 +76,7 @@ struct GameScreen: View {
                 if game.showsPaused && !menuOpen && !game.isOpen(.saveStates)
                     && !model.isDialogShown {
                     PausedIndicator(model: model, game: game)
-                        .transition(reduceMotion ? .opacity : .scale(scale: 1.25).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .scale(scale: 1.1).combined(with: .opacity))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 

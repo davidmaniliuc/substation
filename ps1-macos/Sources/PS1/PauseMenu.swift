@@ -18,7 +18,7 @@ struct PauseMenu: View {
     static let width: CGFloat = 300
 
     /// Room for the traffic lights, which sit inside the panel windowed.
-    private var topClearance: CGFloat { isFullScreen ? 24 : 52 }
+    private var topClearance: CGFloat { isFullScreen ? Design.Spacing.xxl : 52 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,7 +47,6 @@ struct PauseMenu: View {
             Divider()
             KeyHints([("↑↓", "Move"), ("←→", "Change"), ("⎋", "Resume")])
                 .padding(.horizontal, Design.Spacing.l)
-                .frame(height: 30)
         }
     }
 }
@@ -87,7 +86,7 @@ private struct PauseMenuHeader: View {
                 Marquee(text: game.discTitle, font: .title3.weight(.semibold))
                 if !compact, let disc = game.currentDisc {
                     Text(verbatim: "\(disc.serial ?? "Unknown") · \(GameInfo.region(disc.identity.region))")
-                        .font(.subheadline).monospacedDigit()
+                        .font(.caption).monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -95,14 +94,14 @@ private struct PauseMenuHeader: View {
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
                     let played = game.sessionPlayed(at: ProcessInfo.processInfo.systemUptime)
                     Text(PlayingFor.pausedAfter(played))
-                        .font(.subheadline)
+                        .font(.caption).monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
             Button { game.setSurface(.pauseMenu, open: false) } label: {
                 Image(systemName: "play.fill")
-                    .font(.title3.weight(.semibold))
+                    .font(.title3.weight(.medium))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.glassProminent)
@@ -133,6 +132,7 @@ private struct PauseMenuList: View {
     let compact: Bool
 
     private var nav: PauseMenuNavigation { game.menu }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -165,7 +165,7 @@ private struct PauseMenuList: View {
             // pointer's never scrolls.
             .onChange(of: nav.focus) { _, focus in
                 guard let focus, nav.focusFromKeys else { return }
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(focus) }
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { proxy.scrollTo(focus) }
             }
         }
     }
@@ -208,7 +208,7 @@ private struct PauseMenuList: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .controlSize(.small)
-            .frame(width: 132)
+            .frame(width: Design.Size.trailingControl)
         }
     }
 
@@ -223,7 +223,7 @@ private struct PauseMenuList: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .controlSize(.small)
-            .frame(width: 132)
+            .frame(width: Design.Size.trailingControl)
         }
     }
 
@@ -246,7 +246,8 @@ private struct PauseMenuList: View {
                 RowIcon(name: model.isMuted ? "speaker.slash" : "speaker.wave.2")
                     .frame(width: RowMetrics.target, height: RowMetrics.target)
             }
-            .buttonStyle(PressFillStyle())
+            .buttonStyle(PressFillStyle(cornerRadius: Design.concentric(
+                Design.Radius.row, inset: (RowMetrics.height - RowMetrics.target) / 2)))
             // The target is wider than the icon column; the overhang keeps
             // the title where the other rows put theirs.
             .padding(.horizontal, -(RowMetrics.target - RowMetrics.icon) / 2)
@@ -263,7 +264,7 @@ private struct PauseMenuList: View {
                                   set: { model.volume = $0 }),
                    in: VolumeSetting.range)
                 .controlSize(.small)
-                .frame(width: 110)
+                .frame(width: Design.Size.trailingControl)
                 .accessibilityLabel("Volume")
         }
     }
@@ -419,10 +420,12 @@ private struct Titled: View {
 /// A plain row's press feedback. The hover tint is the list's own highlight
 /// (the pointer moves it), so this adds only the firmer fill under a press.
 private struct PressFillStyle: ButtonStyle {
+    var cornerRadius = Design.Radius.row
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
-                if configuration.isPressed { Design.cardShape(Design.Radius.row).fill(.fill.secondary) }
+                if configuration.isPressed { Design.cardShape(cornerRadius).fill(.fill.secondary) }
             }
     }
 }

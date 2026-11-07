@@ -22,6 +22,8 @@ enum Design {
         static let alert: CGFloat = 18
         /// A modal card: the resume sheet, the exit prompt.
         static let dialog: CGFloat = 22
+        /// The highlight a cut-out cover sits in, a step out from the tile.
+        static let tileHighlight: CGFloat = tile + Spacing.s
     }
 
     /// The one rounded shape every surface takes, so the corner style is
@@ -45,24 +47,49 @@ enum Design {
         static let l: CGFloat = 16
         static let xl: CGFloat = 20
         static let xxl: CGFloat = 24
+        static let xxxl: CGFloat = 32
         /// A modal card's padding and the gap between its buttons.
         static let dialog: CGFloat = 20
         static let buttonGap: CGFloat = 8
+        /// The room a borderless panel leaves round its card for the shadow.
+        static let shadowMargin: CGFloat = 48
     }
+
+    /// Fixed widths that recur across surfaces.
+    enum Size {
+        /// The narrowest a dialog's push button gets, so Cancel and a short
+        /// verb read as a pair.
+        static let dialogButton: CGFloat = 84
+        /// A small card or popover: the exit prompt, the Save States panel.
+        static let card: CGFloat = 340
+        /// A control trailing a settings row: a picker, a slider.
+        static let trailingControl: CGFloat = 132
+        /// The height of a line of key hints under a surface.
+        static let hintStrip: CGFloat = 30
+    }
+
+    /// How far a control fades when it is disabled.
+    static let disabledOpacity = 0.45
 
     /// The two dimming layers: behind a modal, and behind a sidebar the
     /// picture should still read through.
     enum Dim {
         static let scrim = Color.black.opacity(0.35)
         static let light = Color.black.opacity(0.2)
+        /// The disc under a HUD button while it is held.
+        static let press = Color.black.opacity(0.35)
+        /// The band behind controls over the game picture, so they read on
+        /// a bright frame.
+        static let band = Color.black.opacity(0.45)
     }
 
     /// Lift, smallest to largest.
     enum Shadow {
-        case thumbnail, tile, card
+        case text, thumbnail, tile, card
 
         var opacity: Double {
             switch self {
+            case .text: 0.3
             case .thumbnail: 0.25
             case .tile: 0.3
             case .card: 0.3
@@ -71,6 +98,7 @@ enum Design {
 
         var radius: CGFloat {
             switch self {
+            case .text: 2
             case .thumbnail: 3
             case .tile: 6
             case .card: 30
@@ -79,7 +107,7 @@ enum Design {
 
         var y: CGFloat {
             switch self {
-            case .thumbnail: 1
+            case .text, .thumbnail: 1
             case .tile: 3
             case .card: 12
             }
@@ -90,6 +118,9 @@ enum Design {
     enum Focus {
         static let width: CGFloat = 2
         static let gap: CGFloat = 3
+        /// A selected cover's ring: a step heavier than focus, so a selection
+        /// reads at a glance across a grid.
+        static let selectionWidth: CGFloat = 3
     }
 }
 
@@ -101,10 +132,15 @@ extension View {
     /// The accent ring a custom control draws while it holds keyboard focus,
     /// concentric with its own `cornerRadius`.
     func focusRing(_ shown: Bool, cornerRadius: CGFloat) -> some View {
+        focusRing(shown, in: Design.cardShape(cornerRadius + Design.Focus.gap))
+    }
+
+    /// The same ring for a control of another shape, a capsule button's:
+    /// `shape` is the ring's own outline, `Focus.gap` outside the control.
+    func focusRing(_ shown: Bool, in shape: some InsettableShape) -> some View {
         overlay {
             if shown {
-                Design.cardShape(cornerRadius + Design.Focus.gap)
-                    .strokeBorder(Color.accentColor, lineWidth: Design.Focus.width)
+                shape.strokeBorder(Color.accentColor, lineWidth: Design.Focus.width)
                     .padding(-Design.Focus.gap)
             }
         }
@@ -137,7 +173,7 @@ struct RowPressStyle: ButtonStyle {
                         Design.cardShape(cornerRadius).fill(.fill.tertiary)
                     }
                 }
-                .opacity(isEnabled ? 1 : 0.45)
+                .opacity(isEnabled ? 1 : Design.disabledOpacity)
                 .onHover { hovering = $0 }
         }
     }
@@ -197,10 +233,15 @@ struct BehindWindowBlur: NSViewRepresentable {
 
 /// The inset fill under content set into a surface: the library's panel, the
 /// resume sheet's list and its button strip. A shade darker than the material
-/// in Dark, a shade lighter in Light, so it reads as inset in either.
+/// in Dark, a shade lighter in Light, so it reads as inset in either. Under
+/// Increase Contrast it is the system's opaque control background, so nothing
+/// behind the window shows through the content.
 struct InsetFill: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
-        environment.colorScheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.55)
+        if environment.colorSchemeContrast == .increased {
+            return Color(nsColor: .controlBackgroundColor)
+        }
+        return environment.colorScheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.55)
     }
 }
 
@@ -212,10 +253,10 @@ struct KeyHints<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Design.Spacing.s) {
             ForEach(hints.indices, id: \.self) { i in
                 if i > 0 { Text("·").foregroundStyle(.tertiary) }
-                HStack(spacing: 4) {
+                HStack(spacing: Design.Spacing.xs) {
                     Text(hints[i].key).fontWeight(.semibold).foregroundStyle(.secondary)
                     // Secondary, not tertiary: small grey on the dark panel
                     // falls under the 4.5:1 text contrast at tertiary.
@@ -227,6 +268,7 @@ struct KeyHints<Trailing: View>: View {
         }
         .font(.caption)
         .lineLimit(1)
+        .frame(height: Design.Size.hintStrip)
         .accessibilityElement(children: .combine)
     }
 }

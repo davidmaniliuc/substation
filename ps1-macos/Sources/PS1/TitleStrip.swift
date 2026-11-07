@@ -13,11 +13,11 @@ struct TitleStrip: View {
     /// toolbar, which centres them in a 52 pt band.
     @State private var lights: CGRect?
 
-    static let fullScreenLeading: CGFloat = 20
+    static let fullScreenLeading = Design.Spacing.xl
     static let fullScreenTop: CGFloat = 9
     /// From the zoom button's trailing edge to the title, a toolbar item's gap.
     static let besideLights: CGFloat = 14
-    static let trailing: CGFloat = 20
+    static let trailing = Design.Spacing.xl
 
     var body: some View {
         // Every 30 s: "Playing for" counts minutes.
@@ -29,11 +29,11 @@ struct TitleStrip: View {
                     .lineLimit(1)
                 Text(status(at: context.date))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.secondary)
             }
         }
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+        .designShadow(.text)
         // Windowed, centred on the traffic lights' line and just past the
         // zoom button; they share this band and fade with it.
         .frame(height: windowed.map { $0.midY * 2 }, alignment: .center)

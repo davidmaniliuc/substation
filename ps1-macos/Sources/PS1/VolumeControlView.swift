@@ -57,7 +57,7 @@ struct VolumeSlider: View {
     }
 }
 
-/// The speaker icon. Same 28x28 frame as every other HUD button.
+/// The speaker icon, in the bar's own button style.
 struct VolumeButton: View {
     let level: Double
     let isMuted: Bool
