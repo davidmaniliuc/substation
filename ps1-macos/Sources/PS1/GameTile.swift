@@ -34,7 +34,7 @@ struct GameTile: View {
     private static let dragPreviewSide: CGFloat = 150
     /// A cut-out's selection highlight sits `highlightInset` past its
     /// square, concentric with it, on the scale's next step up.
-    private static let highlightRadius = Design.Radius.tileHighlight
+    private static let highlightRadius = Design.Radius.raised
     private static let highlightInset = highlightRadius - corner
 
     var body: some View {
@@ -115,7 +115,7 @@ struct GameTile: View {
             square
                 .clipShape(Design.cardShape(Self.corner))
                 .overlay {
-                    Design.cardShape(Self.corner).strokeBorder(.separator)
+                    Design.cardShape(Self.corner).strokeBorder(.separator, lineWidth: Design.hairline)
                 }
                 // Outside the art and concentric with it, so the ring never
                 // covers the cover and its inner corner matches the cover's.

@@ -90,7 +90,7 @@ struct ContinueButton: View {
                 art
                     .frame(width: Self.side, height: Self.side)
                     .clipShape(.circle)
-                    .overlay(Circle().strokeBorder(.separator))
+                    .overlay(Circle().strokeBorder(.separator, lineWidth: Design.hairline))
                 VStack(alignment: .leading, spacing: 0) {
                     Text(group.title)
                         .font(.callout.weight(.semibold))

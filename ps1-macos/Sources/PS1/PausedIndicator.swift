@@ -20,7 +20,7 @@ struct PausedIndicator: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(.clear.interactive(), in: .circle)
         // Under the glass: the picture behind a bright frame would wash it out.
         .background(Circle().fill(Design.Dim.scrim))
         .help("Resume")

@@ -140,7 +140,7 @@ private struct KeyCapShape<Content: View>: View {
             .padding(.vertical, Design.Spacing.xxs)
             .frame(minWidth: 44)
             .background(.quaternary, in: shape)
-            .overlay(shape.strokeBorder(.separator))
+            .overlay(shape.strokeBorder(.separator, lineWidth: Design.hairline))
             .contentShape(shape)
     }
 }

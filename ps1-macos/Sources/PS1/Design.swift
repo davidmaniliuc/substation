@@ -18,12 +18,11 @@ enum Design {
         static let tile: CGFloat = 10
         /// The library's panel, a large screenshot.
         static let panel: CGFloat = 12
-        /// A confirmation laid over a dialog.
-        static let alert: CGFloat = 18
+        /// A confirmation laid over a dialog, and the highlight a cut-out
+        /// cover sits in: a step in from a dialog.
+        static let raised: CGFloat = dialog - Spacing.xs
         /// A modal card: the resume sheet, the exit prompt.
         static let dialog: CGFloat = 22
-        /// The highlight a cut-out cover sits in, a step out from the tile.
-        static let tileHighlight: CGFloat = tile + Spacing.s
     }
 
     /// The one rounded shape every surface takes, so the corner style is
@@ -68,6 +67,9 @@ enum Design {
         static let hintStrip: CGFloat = 30
     }
 
+    /// The one outline width: a pixel on a Retina display.
+    static let hairline: CGFloat = 0.5
+
     /// How far a control fades when it is disabled.
     static let disabledOpacity = 0.45
 
@@ -76,8 +78,6 @@ enum Design {
     enum Dim {
         static let scrim = Color.black.opacity(0.35)
         static let light = Color.black.opacity(0.2)
-        /// The disc under a HUD button while it is held.
-        static let press = Color.black.opacity(0.35)
         /// The band behind controls over the game picture, so they read on
         /// a bright frame.
         static let band = Color.black.opacity(0.45)

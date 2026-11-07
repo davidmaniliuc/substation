@@ -75,7 +75,7 @@ struct Badge: View {
             .font(.callout.weight(.semibold).monospacedDigit())
             .padding(.horizontal, Design.Spacing.m)
             .padding(.vertical, Design.Spacing.s)
-            .glassEffect(.regular, in: .capsule)
+            .glassEffect(.clear, in: .capsule)
             .badgeTransition()
             .allowsHitTesting(interactive)
     }

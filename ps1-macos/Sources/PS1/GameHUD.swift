@@ -110,7 +110,7 @@ struct GameHUD: View {
             let button = tab.anchor.map { geo[$0] }
             Color.clear
                 .frame(width: geo.size.width, height: geo.size.height + SpeedPick.rise)
-                .glassEffect(.regular, in: BarShape(
+                .glassEffect(.clear, in: BarShape(
                     tabMinX: (button?.minX ?? 0) - SpeedPick.pad,
                     tabWidth: (button?.width ?? 0) + 2 * SpeedPick.pad,
                     rise: tab.rise,
@@ -136,7 +136,7 @@ struct GameHUD: View {
         .padding(.leading, pillPadding)
         .padding(.trailing, pillRight)
         .padding(.vertical, SpeedPick.barPad - pillInset)
-        .glassEffect(.regular, in: .capsule)
+        .glassEffect(.clear, in: .capsule)
         // The whole capsule, so a click in the pill's padding lands on the
         // pill rather than on the bar button it is covering.
         .contentShape(.capsule)

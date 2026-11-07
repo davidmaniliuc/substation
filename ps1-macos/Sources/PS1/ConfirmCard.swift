@@ -45,7 +45,7 @@ struct ConfirmCard: View {
         }
         .padding(Design.Spacing.dialog)
         .background { if bindsKeys { keys } }
-        .dialogSurface(cornerRadius: Design.Radius.alert)
+        .dialogSurface(cornerRadius: Design.Radius.raised)
     }
 
     @ViewBuilder private func button(_ i: Int) -> some View {
@@ -83,14 +83,15 @@ struct ConfirmCard: View {
 
 /// A `ConfirmCard` over what it asks about: the content is dimmed, and a
 /// click on the dimming is Cancel.
-struct ConfirmScrim<Card: View>: View {
-    let cornerRadius: CGFloat
+struct ConfirmScrim<Card: View, Clip: Shape>: View {
+    /// The container's own shape, so the dim never squares off its corner.
+    let shape: Clip
     let cancel: () -> Void
     @ViewBuilder let card: Card
 
     var body: some View {
         ZStack {
-            Design.cardShape(cornerRadius).fill(Design.Dim.light)
+            shape.fill(Design.Dim.light)
                 .onTapGesture(perform: cancel)
             card
         }

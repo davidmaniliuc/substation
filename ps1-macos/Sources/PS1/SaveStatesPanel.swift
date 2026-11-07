@@ -33,7 +33,7 @@ struct SaveStatesPanel: View {
         .overlay {
             if let sheet = nav?.sheet {
                 // The popover clips the dimming to its own shape.
-                ConfirmScrim(cornerRadius: 0, cancel: { game.pressSheet(.cancel) }) {
+                ConfirmScrim(shape: Rectangle(), cancel: { game.pressSheet(.cancel) }) {
                     SlotSheet(source: SaveStatesNavigation.source(sheet.row), info: info(sheet.row),
                               sheet: sheet, showsFocus: nav?.showsFocus == true) { game.pressSheet($0) }
                 }
@@ -144,7 +144,7 @@ private struct StateThumbnail: View {
                 Image(nsImage: image).resizable().interpolation(.high)
                     .clipShape(Design.cardShape(radius))
                     // The hairline system thumbnails carry, so a dark frame keeps its edge.
-                    .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: 0.5))
+                    .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: Design.hairline))
             } else {
                 Design.cardShape(radius).fill(.fill.quaternary)
             }

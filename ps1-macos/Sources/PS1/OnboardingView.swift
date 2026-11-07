@@ -102,7 +102,7 @@ private struct FolderRow: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
-                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.thumbnail))
+                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.row))
                 VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                     Text(title).font(.headline)
                     Group {

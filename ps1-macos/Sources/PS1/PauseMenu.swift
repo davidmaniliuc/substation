@@ -78,8 +78,8 @@ private struct PauseMenuHeader: View {
                 Image(nsImage: cover).resizable().interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: coverSide, maxHeight: coverSide)
-                    .clipShape(Design.cardShape(Design.Radius.thumbnail))
-                    .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+                    .clipShape(Design.cardShape(Design.Radius.row))
+                    .overlay(Design.cardShape(Design.Radius.row).strokeBorder(.separator, lineWidth: Design.hairline))
                     .designShadow(.thumbnail)
             }
             VStack(alignment: .leading, spacing: Design.Spacing.xxs) {

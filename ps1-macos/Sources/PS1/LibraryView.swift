@@ -117,7 +117,7 @@ struct LibraryView: View {
         .background(InsetFill(), in: Design.cardShape(Self.panelRadius))
         .overlay {
             Design.cardShape(Self.panelRadius)
-                .strokeBorder(.separator)
+                .strokeBorder(.separator, lineWidth: Design.hairline)
         }
         .clipShape(Design.cardShape(Self.panelRadius))
     }
@@ -175,7 +175,7 @@ struct LibraryView: View {
                 .padding(.vertical, Design.Spacing.s)
                 // Material, not glass: the banner floats over the covers in
                 // the content layer, where glass is reserved for controls.
-                .background(.regularMaterial, in: .capsule)
+                .background(.thickMaterial, in: .capsule)
                 .accessibilityElement(children: .combine)
                 .padding(Self.contentInset)
             }

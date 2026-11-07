@@ -63,7 +63,7 @@ struct PressStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .background(Capsule()
-                    .fill(configuration.isPressed ? Design.Dim.press : .clear)
+                    .fill(configuration.isPressed ? Design.Dim.scrim : .clear)
                     .frame(width: IconButton.width, height: IconButton.height))
                 .opacity(isEnabled ? 1 : Design.disabledOpacity)
         }
@@ -135,6 +135,8 @@ struct BarShape: Shape {
 
     /// The tab's top corners; the highlight inside it is concentric.
     static let cornerRadius = Design.Radius.panel
+    /// The concave joint where the tab leaves the bar.
+    static let fillet: CGFloat = 10
 
     var animatableData: CGFloat {
         get { rise }
@@ -149,7 +151,7 @@ struct BarShape: Shape {
         p.move(to: CGPoint(x: rect.minX + r, y: top))
         if rise > 0.5 {
             let l = tabMinX, rr = tabMinX + tabWidth, t = top - rise
-            let fillet = min(Design.Radius.tile, rise / 2)
+            let fillet = min(Self.fillet, rise / 2)
             let corner = min(Self.cornerRadius, rise / 2, tabWidth / 2)
             p.addArc(tangent1End: CGPoint(x: l, y: top), tangent2End: CGPoint(x: l, y: t), radius: fillet)
             p.addArc(tangent1End: CGPoint(x: l, y: t), tangent2End: CGPoint(x: rr, y: t), radius: corner)

@@ -75,7 +75,7 @@ struct ResumePromptSheet: View {
         .disabled(pendingDelete != nil)
         .overlay {
             if let source = pendingDelete {
-                ConfirmScrim(cornerRadius: Design.Radius.dialog, cancel: { pendingDelete = nil }) {
+                ConfirmScrim(shape: Design.cardShape(Design.Radius.dialog), cancel: { pendingDelete = nil }) {
                     ConfirmCard(title: "Delete \(source.title)?", message: ConfirmCard.deleteMessage,
                                 buttons: [ConfirmButton(title: "Cancel"),
                                           ConfirmButton(title: "Delete", destructive: true)],
@@ -123,7 +123,7 @@ struct ResumePromptSheet: View {
             }
             .frame(width: 40, height: 40)
             .clipShape(Design.cardShape(Design.Radius.thumbnail))
-            .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+            .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: Design.hairline))
             .designShadow(.thumbnail)
             Marquee(text: offer.title, font: .title3.weight(.semibold))
         }
@@ -286,7 +286,7 @@ private struct StateScreenshot: View {
             .aspectRatio(4 / 3, contentMode: .fit)
             .clipShape(Design.cardShape(radius))
             // The hairline every system thumbnail has, so a dark frame keeps its edge.
-            .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: 0.5))
+            .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: Design.hairline))
     }
 }
 
