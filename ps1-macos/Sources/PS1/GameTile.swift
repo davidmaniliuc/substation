@@ -33,13 +33,15 @@ struct GameTile: View {
     private static let corner = Design.Radius.tile
     private static let dragPreviewSide: CGFloat = 150
     private static let selectionWidth: CGFloat = 3
-    /// How far a cut-out's selection highlight reaches past its square.
-    private static let highlightInset: CGFloat = 6
+    /// A cut-out's selection highlight sits `highlightInset` past its
+    /// square, concentric with it, on the scale's next step up.
+    private static let highlightRadius = Design.Radius.alert
+    private static let highlightInset = highlightRadius - corner
 
     var body: some View {
         let image = coverURL.flatMap(NSImage.init(contentsOf:))
         let cutOut = image.map(CoverShape.isCutOut) ?? false
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Spacing.s) {
             framed(art(image), cutOut: cutOut)
                 // The payload is the title, never the file URL: a file URL
                 // dropped on Finder copies a disc image of hundreds of
@@ -56,11 +58,11 @@ struct GameTile: View {
                     if cutOut {
                         preview
                     } else {
-                        preview.clipShape(.rect(cornerRadius: Self.corner))
+                        preview.clipShape(Design.cardShape(Self.corner))
                     }
                 }
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                 Text(title)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
@@ -69,7 +71,7 @@ struct GameTile: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 2)
+            .padding(.horizontal, Design.Spacing.xxs)
         }
         // The caption sits flush with the cover's leading edge, whatever
         // width the grid's column gives the tile.
@@ -85,8 +87,10 @@ struct GameTile: View {
         }
         .help(entry.title)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(entry.title)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityLabel(title)
+        .accessibilityValue(subtitle)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: "Play", play)
     }
 
     /// A flat scan is clipped and outlined as a square. A cut-out (a 3D case)
@@ -100,25 +104,30 @@ struct GameTile: View {
         let square = art.aspectRatio(Self.aspect, contentMode: .fit)
         if cutOut {
             square
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                .designShadow(.tile)
                 .background {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: Self.corner + Self.highlightInset)
+                        Design.cardShape(Self.highlightRadius)
                             .fill(.tint.opacity(0.25))
                             .padding(-Self.highlightInset)
                     }
                 }
         } else {
             square
-                .clipShape(.rect(cornerRadius: Self.corner))
+                .clipShape(Design.cardShape(Self.corner))
                 .overlay {
-                    RoundedRectangle(cornerRadius: Self.corner)
-                        .strokeBorder(isSelected
-                                      ? AnyShapeStyle(.tint)
-                                      : AnyShapeStyle(.primary.opacity(0.08)),
-                                      lineWidth: isSelected ? Self.selectionWidth : 1)
+                    Design.cardShape(Self.corner).strokeBorder(.separator)
                 }
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                // Outside the art and concentric with it, so the ring never
+                // covers the cover and its inner corner matches the cover's.
+                .overlay {
+                    if isSelected {
+                        Design.cardShape(Self.corner + Self.selectionWidth)
+                            .strokeBorder(.tint, lineWidth: Self.selectionWidth)
+                            .padding(-Self.selectionWidth)
+                    }
+                }
+                .designShadow(.tile)
         }
     }
 
@@ -135,13 +144,12 @@ struct GameTile: View {
 
     private var placeholder: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color(white: 0.20), Color(white: 0.12)],
-                startPoint: .top, endPoint: .bottom)
+            Rectangle().fill(.fill.quaternary)
 
             Image(systemName: "opticaldisc")
-                .font(.system(size: 34, weight: .thin))
-                .foregroundStyle(.tertiary)
+                .font(.largeTitle)
+                .imageScale(.large)
+                .foregroundStyle(.secondary)
         }
     }
 }

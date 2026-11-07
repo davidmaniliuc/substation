@@ -40,6 +40,7 @@ struct LibraryView: View {
 
     private static let tileSpacing = CGFloat(LibraryLayoutSetting.tileSpacing)
     private static let tileStretch = CGFloat(LibraryLayoutSetting.tileStretch)
+    private static let rowSpacing = CGFloat(LibraryLayoutSetting.rowSpacing)
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: tileSize, maximum: tileSize * Self.tileStretch),
@@ -47,8 +48,11 @@ struct LibraryView: View {
     }
 
     /// The panel's inset from the window's edges.
-    private static let panelInset: CGFloat = 10
+    private static let panelInset = Design.Spacing.m
     private static let panelRadius = Design.Radius.panel
+    /// The one inset inside the panel, on both sides: the header, the grid,
+    /// the status banner and the hint line below all keep their content on it.
+    private static let contentInset = Design.Spacing.l
 
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
@@ -64,13 +68,15 @@ struct LibraryView: View {
         GridSelection.columns(width: gridWidth, minimum: tileSize, spacing: Self.tileSpacing)
     }
     @FocusState private var gridFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var isSearching: Bool { !searchText.allSatisfy(\.isWhitespace) }
 
     var body: some View {
         VStack(spacing: 0) {
             panel
                 .padding(.horizontal, Self.panelInset)
-            LibraryHints(shown: groups.count, total: totalCount)
+            LibraryHints(shown: groups.count, total: totalCount,
+                         inset: Self.panelInset + Self.contentInset)
         }
         .animation(.easeOut(duration: 0.3), value: downloadStatus)
     }
@@ -108,33 +114,32 @@ struct LibraryView: View {
                 }
             }
         }
-        .background(InsetFill(), in: .rect(cornerRadius: Self.panelRadius))
+        .background(InsetFill(), in: Design.cardShape(Self.panelRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: Self.panelRadius)
+            Design.cardShape(Self.panelRadius)
                 .strokeBorder(.separator)
         }
-        .clipShape(.rect(cornerRadius: Self.panelRadius))
+        .clipShape(Design.cardShape(Self.panelRadius))
     }
 
     /// The tab's name and how many games it shows, and the grid's order.
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Spacing.s) {
             Image(systemName: tab.symbol)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
             Text(tab.title)
                 .font(.headline)
             Text("\(groups.count)")
                 .font(.callout.monospacedDigit())
-                .foregroundStyle(.tertiary)
-            Spacer(minLength: 8)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: Design.Spacing.s)
             // Recently Played's newest-first order is the tab itself.
             if tab != .recent {
                 LibraryOrderPill(order: $order)
             }
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 10)
+        .padding(.horizontal, Self.contentInset)
         .frame(height: 44)
     }
 
@@ -157,7 +162,7 @@ struct LibraryView: View {
             Spacer()
             HStack {
                 Spacer()
-                HStack(spacing: 8) {
+                HStack(spacing: Design.Spacing.s) {
                     if isDownloading {
                         ProgressView().controlSize(.small)
                         Text("Downloading covers…")
@@ -166,10 +171,15 @@ struct LibraryView: View {
                     }
                 }
                 .font(.callout)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .glassEffect(.regular, in: .capsule)
-                .padding(18)
+                .padding(.horizontal, Design.Spacing.m)
+                .padding(.vertical, Design.Spacing.s)
+                // Material, not glass: the banner floats over the covers in
+                // the content layer, where glass is reserved for controls.
+                .background(.regularMaterial, in: .capsule)
+                .overlay { Capsule().strokeBorder(.separator) }
+                .designShadow(.thumbnail)
+                .accessibilityElement(children: .combine)
+                .padding(Self.contentInset)
             }
         }
         .transition(.opacity)
@@ -190,7 +200,7 @@ struct LibraryView: View {
     private var grid: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 22) {
+                LazyVGrid(columns: columns, spacing: Self.rowSpacing) {
                     ForEach(groups) { group in
                         // The group's first disc carries its cover and is what
                         // Play opens; a multi-disc game always starts on disc 1,
@@ -218,7 +228,7 @@ struct LibraryView: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
                     gridWidth = $0
                 }
-                .padding(18)
+                .padding(Self.contentInset)
                 // The gaps between tiles: a click there clears the selection,
                 // as it does in Apple Music.
                 .background {
@@ -245,7 +255,9 @@ struct LibraryView: View {
                     from: index, direction, count: groups.count, columns: columnCount)
                 else { return }
                 selection = groups[next].id
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(groups[next].id) }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
+                    proxy.scrollTo(groups[next].id)
+                }
             }
             .onExitCommand { selection = nil }
             .onKeyPress(.return) {
@@ -259,26 +271,16 @@ struct LibraryView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "tray")
-                .font(.system(size: 40, weight: .thin))
-                .foregroundStyle(.tertiary)
-
-            Text(library.folderURL == nil
-                 ? "No games folder chosen"
-                 : "No games found in \(library.folderURL!.lastPathComponent)")
-                .font(.title3.weight(.semibold))
-
+        ContentUnavailableView {
+            Label(library.folderURL.map { "No games found in \($0.lastPathComponent)" }
+                  ?? "No games folder chosen",
+                  systemImage: LibraryTab.all.symbol)
+        } description: {
             Text("A game is a .cue, .chd, .ccd, .mds, .pbp or .ecm file, or a .bin, .iso or .img in a folder with no .cue. Subfolders are scanned too.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-
+        } actions: {
             Button("Choose Games Folder…", action: chooseFolder)
                 .buttonStyle(.glassProminent)
         }
-        .padding(36)
     }
 }
 
@@ -287,14 +289,15 @@ struct LibraryView: View {
 private struct LibraryHints: View {
     let shown: Int
     let total: Int
+    let inset: CGFloat
 
     var body: some View {
         KeyHints(hints: [("↩", "Play"), ("⌘F", "Search"), ("⌘,", "Settings")]) {
             if shown != total {
-                Text("\(shown) of \(total)").monospacedDigit().foregroundStyle(.tertiary)
+                Text("\(shown) of \(total)").monospacedDigit().foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, inset)
         .frame(height: 30)
     }
 }

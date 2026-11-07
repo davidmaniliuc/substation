@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The bar along the bottom:
-/// `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`.
+/// `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · Menu`.
 ///
 /// The bar is ONE glass effect, its `BarShape`, which carries the speed tab
 /// as part of the same outline. One effect is one pass over the 60 fps Metal
@@ -25,25 +25,26 @@ struct GameHUD: View {
     /// it means nothing outside this bar and must not survive the bar being
     /// hidden, which is what the `isVisible` change below enforces.
     @State private var volume = VolumeControlState()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The insets the three layers share. The pill's seat for the speaker
     /// lands exactly on the bar's: `pillInset + pillPadding == barInset`.
-    private let iconSize: CGFloat = 28
-    private let barInset: CGFloat = 16
-    private let pillInset: CGFloat = 7
+    private let iconSize = IconButton.height
+    private let barInset = Design.Spacing.l
+    private let pillInset = Design.Spacing.s
     private var pillPadding: CGFloat { barInset - pillInset }
-    private let spacing: CGFloat = 6
+    private let spacing = Design.Spacing.s
     /// The menu button right of the speaker, and the spacing before it: the
     /// pill stops short of it.
     private var trailingWidth: CGFloat { IconButton.width + spacing }
     /// The pill's own right padding, tight so it ends just past the speaker.
-    private let pillRight: CGFloat = 4
+    private let pillRight = Design.Spacing.xs
 
     var body: some View {
         ZStack(alignment: .trailing) {
             HStack(spacing: spacing) {
                 IconButton(symbol: game.showsPaused ? "play.fill" : "pause.fill",
-                           help: game.showsPaused ? "Play" : "Pause", size: 17) {
+                           help: game.showsPaused ? "Play" : "Pause", font: .title2) {
                     game.togglePause()
                 }
                 SaveStatesButton(model: model, game: game)
@@ -81,7 +82,7 @@ struct GameHUD: View {
                 if !inside { volume.pointerExited() }
             }
         }
-        .animation(.snappy(duration: 0.28), value: volume.isExpanded)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: volume.isExpanded)
         .opacity(isVisible ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: isVisible)
         .allowsHitTesting(isVisible)
@@ -117,7 +118,7 @@ struct GameHUD: View {
                     barHeight: geo.size.height))
                 .offset(y: -SpeedPick.rise)
                 .allowsHitTesting(false)
-                .animation(.snappy(duration: 0.22), value: tab.rise)
+                .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: tab.rise)
         }
     }
 
@@ -125,7 +126,7 @@ struct GameHUD: View {
     /// above and below, which is what makes it read as a second capsule laid
     /// over the first rather than as the bar itself changing shape.
     private var pill: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Design.Spacing.m) {
             VolumeSlider(level: $model.volume, isMuted: model.isMuted) {
                 if $0 { volume.adjustingBegan() } else { volume.adjustingEnded() }
             }
@@ -134,14 +135,16 @@ struct GameHUD: View {
         }
         .padding(.leading, pillPadding)
         .padding(.trailing, pillRight)
-        .padding(.vertical, 4)
+        .padding(.vertical, SpeedPick.barPad - pillInset)
         .glassEffect(.regular, in: .capsule)
         // The whole capsule, so a click in the pill's padding lands on the
         // pill rather than on the bar button it is covering.
         .contentShape(.capsule)
         .padding(.trailing, barInset + trailingWidth - pillRight)
         // Grows out of the icon rather than fading in over the bar.
-        .transition(.scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
+        // Under Reduce Motion it only fades.
+        .transition(reduceMotion ? .opacity
+                                 : .scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
     }
 
     /// The space the speaker icon occupies in a capsule that does not draw

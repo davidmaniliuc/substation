@@ -60,8 +60,8 @@ import Foundation
 }
 
 @Test func theQuestionNamesWhatIsBeingLeft() {
-    #expect(ExitIntent.quit.question == "Are you sure you want to exit the application?")
-    #expect(ExitIntent.closeWindow.question == "Are you sure you want to exit the application?")
-    #expect(ExitIntent.eject.question == "Are you sure you want to exit the game?")
-    #expect(ExitIntent.open(URL(fileURLWithPath: "/x.cue")).question == "Are you sure you want to exit the game?")
+    #expect(ExitIntent.quit.title == "Quit Substation?")
+    #expect(ExitIntent.closeWindow.verb == "Quit")
+    #expect(ExitIntent.eject.title == "Exit Game?")
+    #expect(ExitIntent.open(URL(fileURLWithPath: "/x.cue")).verb == "Exit Game")
 }

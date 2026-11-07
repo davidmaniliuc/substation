@@ -31,19 +31,19 @@ struct ConfirmCard: View {
     static let deleteMessage = "This can’t be undone."
 
     var body: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 4) {
+        VStack(spacing: Design.Spacing.l) {
+            VStack(spacing: Design.Spacing.xs) {
                 Text(title).font(.headline)
                 Text(message).font(.callout).foregroundStyle(.secondary)
             }
             .multilineTextAlignment(.center)
-            HStack(spacing: 10) {
+            HStack(spacing: Design.Spacing.buttonGap) {
                 ForEach(buttons.indices, id: \.self) { button($0) }
             }
             .fixedSize()
             .controlSize(.large)
         }
-        .padding(20)
+        .padding(Design.Spacing.dialog)
         .background { if bindsKeys { keys } }
         .dialogSurface(cornerRadius: Design.Radius.alert)
     }
@@ -57,14 +57,10 @@ struct ConfirmCard: View {
             if i == highlighted && !spec.destructive && spec.title != "Cancel" {
                 base.buttonStyle(.borderedProminent)
             } else {
-                base.buttonStyle(.bordered).foregroundStyle(spec.destructive ? Color.red : .primary)
+                base.buttonStyle(.bordered)
             }
         }
-        .overlay {
-            if showsFocus && i == highlighted {
-                Capsule().strokeBorder(Color.accentColor, lineWidth: 3).padding(-4)
-            }
-        }
+        .focusRing(showsFocus && i == highlighted, cornerRadius: Design.Radius.dialog)
     }
 
     /// Escape as an unseen button. Return is the highlighted button's when
@@ -93,7 +89,7 @@ struct ConfirmScrim<Card: View>: View {
 
     var body: some View {
         ZStack {
-            Design.cardShape(cornerRadius).fill(.black.opacity(0.35))
+            Design.cardShape(cornerRadius).fill(Design.Dim.scrim)
                 .onTapGesture(perform: cancel)
             card
         }

@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// The exit prompt: a question for a title, Cancel, and a button named for
+/// what it does. Return confirms and Escape cancels. It lays itself out as
+/// `ConfirmCard` does, with the one choice a card has no place for.
 struct ConfirmExitSheet: View {
     let intent: ExitIntent
     @Binding var saveState: Bool
@@ -7,22 +10,25 @@ struct ConfirmExitSheet: View {
     let confirm: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Confirm Exit").font(.headline)
-            Text(intent.question)
-            Toggle("Save State For Resume", isOn: $saveState)
+        VStack(spacing: Design.Spacing.l) {
+            Text(intent.title)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Toggle("Save state for resume", isOn: $saveState)
                 .toggleStyle(.checkbox)
-            HStack(spacing: 12) {
-                Button(action: cancel) { Text("No").frame(maxWidth: .infinity) }
+            HStack(spacing: Design.Spacing.buttonGap) {
+                Button(action: cancel) { Text("Cancel").frame(minWidth: 84, maxWidth: .infinity) }
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(.bordered)
-                Button(action: confirm) { Text("Yes").frame(maxWidth: .infinity) }
+                Button(action: confirm) { Text(intent.verb).frame(minWidth: 84, maxWidth: .infinity) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }
+            .fixedSize()
             .controlSize(.large)
         }
-        .padding(24)
+        .padding(Design.Spacing.dialog)
         .frame(width: 340)
     }
 }
+

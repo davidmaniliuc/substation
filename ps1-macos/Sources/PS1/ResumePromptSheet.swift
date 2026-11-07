@@ -29,8 +29,8 @@ struct ResumePromptSheet: View {
 
     private static let hero: CGFloat = 360
     private static let column: CGFloat = 270
-    private static let spacing: CGFloat = 20
-    private static let padding: CGFloat = 20
+    private static let spacing = Design.Spacing.xl
+    private static let padding = Design.Spacing.dialog
     /// The column alone, wide enough for the footer's three buttons.
     private static let compactColumn: CGFloat = 360
     /// What the dialog leaves clear of the window's edges.
@@ -54,7 +54,7 @@ struct ResumePromptSheet: View {
                 } else {
                     HStack(alignment: .top, spacing: Self.spacing) {
                         if showsHero { heroImage }
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: Design.Spacing.m) {
                             header
                             list
                         }
@@ -98,7 +98,8 @@ struct ResumePromptSheet: View {
     private var heroImage: some View {
         ZStack {
             if let source = selected?.source {
-                StateScreenshot(image: thumbnails[source], radius: Design.Radius.panel)
+                StateScreenshot(image: thumbnails[source],
+                                radius: Design.Radius.panel)
                     .id(source)
                     .transition(.opacity)
             }
@@ -108,21 +109,21 @@ struct ResumePromptSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Design.Spacing.m) {
             Group {
                 if let coverImage {
                     Image(nsImage: coverImage).resizable().interpolation(.high)
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    RoundedRectangle(cornerRadius: Design.Radius.thumbnail).fill(.quaternary)
+                    Design.cardShape(Design.Radius.thumbnail).fill(.quaternary)
                         .overlay(Image(systemName: "opticaldisc").foregroundStyle(.secondary))
                 }
             }
             .frame(width: 40, height: 40)
-            .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
-            .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
-            Marquee(text: offer.title, font: .system(size: 15, weight: .semibold))
+            .clipShape(Design.cardShape(Design.Radius.thumbnail))
+            .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+            .designShadow(.thumbnail)
+            Marquee(text: offer.title, font: .title3.weight(.semibold))
         }
     }
 
@@ -130,25 +131,28 @@ struct ResumePromptSheet: View {
     /// focused and grey while not.
     private var list: some View {
         List(offer.states, id: \.source, selection: $selection) { saved in
-            HStack(spacing: 10) {
+            HStack(spacing: Design.Spacing.m) {
                 StateScreenshot(image: thumbnails[saved.source], radius: Design.Radius.thumbnail).frame(width: 40)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(saved.source.title).font(.system(size: 13))
+                VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
+                    Text(saved.source.title).font(.body)
                     if discMissing(saved.source) {
-                        Text("Disc missing").font(.system(size: 11)).foregroundStyle(.orange)
+                        Label("Disc missing", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     } else {
-                        Text(StateSource.savedAt(saved.info.savedAt)).font(.system(size: 11))
+                        Text(StateSource.savedAt(saved.info.savedAt)).font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, Design.Spacing.xxs)
             .help(discMissing(saved.source) ? Self.discMissingHelp : "")
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .alternatingRowBackgrounds(.disabled)
-        .background(InsetFill(), in: .rect(cornerRadius: Design.Radius.row))
+        .background(InsetFill(), in: Design.cardShape(Design.Radius.row))
         .background(ListFocus(isFocused: pendingDelete == nil))
         .contextMenu(forSelectionType: StateSource.self) { sources in
             if let source = sources.first {
@@ -169,22 +173,21 @@ struct ResumePromptSheet: View {
     private var footer: some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 8) {
+            HStack(spacing: Design.Spacing.buttonGap) {
                 if let saved = selected {
                     // The selected state's delete, in view: never only behind
                     // the context menu or ⌫ (HIG Context Menus).
                     Button(role: .destructive) { pendingDelete = saved.source } label: {
-                        Label("Delete…", systemImage: "trash").font(.system(size: 13, weight: .medium))
+                        Label("Delete…", systemImage: "trash")
                     }
                     .buttonStyle(HoverOutline())
-                    .foregroundStyle(.red)
                     .help("Delete \(saved.source.title)")
                 }
                 Spacer(minLength: 0)
                 buttons
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, Design.Spacing.dialog)
+            .padding(.vertical, Design.Spacing.m)
             // An explicit rectangle: with no shape, the fill takes the
             // card's rounded shape and the strip grows corners of its own
             // under the hairline. The card's clip rounds its bottom.
@@ -195,7 +198,7 @@ struct ResumePromptSheet: View {
     /// Start Fresh, then the default: the selected state's name, or Start
     /// Fresh itself once no state is left.
     private var buttons: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Spacing.buttonGap) {
             if let saved = selected {
                 Button("Start Fresh") { choose(.freshBoot) }
                 Button(saved.source.title) { load(saved.source) }
@@ -274,14 +277,14 @@ private struct StateScreenshot: View {
     let radius: CGFloat
 
     var body: some View {
-        RoundedRectangle(cornerRadius: radius).fill(.black)
+        Design.cardShape(radius).fill(.black)
             .overlay {
                 if let image { Image(nsImage: image).resizable().interpolation(.high) }
             }
             .aspectRatio(4 / 3, contentMode: .fit)
-            .clipShape(.rect(cornerRadius: radius))
+            .clipShape(Design.cardShape(radius))
             // The hairline every system thumbnail has, so a dark frame keeps its edge.
-            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
+            .overlay(Design.cardShape(radius).strokeBorder(.separator, lineWidth: 0.5))
     }
 }
 
@@ -296,15 +299,21 @@ private struct HoverOutline: ButtonStyle {
     private struct Outlined: View {
         let configuration: Configuration
         @State private var hover = false
+        @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
+            let active = isEnabled && (hover || configuration.isPressed)
             configuration.label
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(.primary.opacity(configuration.isPressed ? 0.14 : hover ? 0.06 : 0)))
-                .overlay(Capsule().strokeBorder(.primary.opacity(hover || configuration.isPressed ? 0.22 : 0),
-                                                lineWidth: 1))
+                .foregroundStyle(configuration.role == .destructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                .padding(.horizontal, Design.Spacing.m)
+                .padding(.vertical, Design.Spacing.xs)
+                .frame(minHeight: 28)
+                .background(Capsule().fill(configuration.isPressed ? AnyShapeStyle(.fill.secondary)
+                                           : hover && isEnabled ? AnyShapeStyle(.fill.tertiary)
+                                           : AnyShapeStyle(.clear)))
+                .overlay(Capsule().strokeBorder(.separator, lineWidth: 1).opacity(active ? 1 : 0))
                 .contentShape(Capsule())
+                .opacity(isEnabled ? 1 : 0.45)
                 .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
         }
     }

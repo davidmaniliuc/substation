@@ -24,9 +24,122 @@ enum Design {
         static let dialog: CGFloat = 22
     }
 
-    /// The one shape a modal card and anything laid over it take.
+    /// The one rounded shape every surface takes, so the corner style is
+    /// stated once.
     static func cardShape(_ cornerRadius: CGFloat) -> RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    /// The corner of a shape set `inset` inside one with `outer`'s corner,
+    /// so the two stay concentric.
+    static func concentric(_ outer: CGFloat, inset: CGFloat) -> CGFloat {
+        max(outer - inset, 2)
+    }
+
+    /// Spacing on a 4 pt grid.
+    enum Spacing {
+        static let xxs: CGFloat = 2
+        static let xs: CGFloat = 4
+        static let s: CGFloat = 8
+        static let m: CGFloat = 12
+        static let l: CGFloat = 16
+        static let xl: CGFloat = 20
+        static let xxl: CGFloat = 24
+        /// A modal card's padding and the gap between its buttons.
+        static let dialog: CGFloat = 20
+        static let buttonGap: CGFloat = 8
+    }
+
+    /// The two dimming layers: behind a modal, and behind a sidebar the
+    /// picture should still read through.
+    enum Dim {
+        static let scrim = Color.black.opacity(0.35)
+        static let light = Color.black.opacity(0.2)
+    }
+
+    /// Lift, smallest to largest.
+    enum Shadow {
+        case thumbnail, tile, card
+
+        var opacity: Double {
+            switch self {
+            case .thumbnail: 0.25
+            case .tile: 0.3
+            case .card: 0.3
+            }
+        }
+
+        var radius: CGFloat {
+            switch self {
+            case .thumbnail: 3
+            case .tile: 6
+            case .card: 30
+            }
+        }
+
+        var y: CGFloat {
+            switch self {
+            case .thumbnail: 1
+            case .tile: 3
+            case .card: 12
+            }
+        }
+    }
+
+    /// The keyboard focus ring drawn by a custom control.
+    enum Focus {
+        static let width: CGFloat = 2
+        static let gap: CGFloat = 3
+    }
+}
+
+extension View {
+    func designShadow(_ shadow: Design.Shadow) -> some View {
+        self.shadow(color: .black.opacity(shadow.opacity), radius: shadow.radius, y: shadow.y)
+    }
+
+    /// The accent ring a custom control draws while it holds keyboard focus,
+    /// concentric with its own `cornerRadius`.
+    func focusRing(_ shown: Bool, cornerRadius: CGFloat) -> some View {
+        overlay {
+            if shown {
+                Design.cardShape(cornerRadius + Design.Focus.gap)
+                    .strokeBorder(Color.accentColor, lineWidth: Design.Focus.width)
+                    .padding(-Design.Focus.gap)
+            }
+        }
+    }
+}
+
+/// A plain row or capsule button that answers the pointer as a menu row
+/// does: a soft fill on hover, a firmer one while pressed, dimmed when
+/// disabled.
+struct RowPressStyle: ButtonStyle {
+    var cornerRadius: CGFloat = Design.Radius.row
+
+    func makeBody(configuration: Configuration) -> some View {
+        Row(configuration: configuration, cornerRadius: cornerRadius)
+    }
+
+    private struct Row: View {
+        let configuration: Configuration
+        let cornerRadius: CGFloat
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .contentShape(Design.cardShape(cornerRadius))
+                .background {
+                    if configuration.isPressed {
+                        Design.cardShape(cornerRadius).fill(.fill.secondary)
+                    } else if hovering && isEnabled {
+                        Design.cardShape(cornerRadius).fill(.fill.tertiary)
+                    }
+                }
+                .opacity(isEnabled ? 1 : 0.45)
+                .onHover { hovering = $0 }
+        }
     }
 }
 
@@ -47,7 +160,7 @@ extension View {
         let shape = Design.cardShape(cornerRadius)
         return clipShape(shape)
             .glassEffect(.regular.tint(Design.dialogTint), in: shape)
-            .shadow(color: .black.opacity(0.3), radius: 30, y: 12)
+            .designShadow(.card)
     }
 }
 

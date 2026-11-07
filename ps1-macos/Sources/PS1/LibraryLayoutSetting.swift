@@ -29,6 +29,8 @@ struct LibraryLayoutSetting {
     static let defaultSize = 132.0
     /// The gap between tiles, which the column count depends on.
     static let tileSpacing = 20.0
+    /// The gap between rows, on the 4 pt grid like `tileSpacing`.
+    static let rowSpacing = 24.0
 
     private let defaults: UserDefaults
     private let sizeKey: String

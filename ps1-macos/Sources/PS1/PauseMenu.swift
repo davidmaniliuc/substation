@@ -24,7 +24,7 @@ struct PauseMenu: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 PauseMenuHeader(model: model, game: game, compact: compact)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, Design.Spacing.l)
                 PauseMenuList(model: model, game: game, compact: compact)
             }
             .padding(.top, topClearance)
@@ -46,8 +46,8 @@ struct PauseMenu: View {
         VStack(spacing: 0) {
             Divider()
             KeyHints([("↑↓", "Move"), ("←→", "Change"), ("⎋", "Resume")])
-                .padding(.horizontal, 18)
-                .frame(height: 36)
+                .padding(.horizontal, Design.Spacing.l)
+                .frame(height: 30)
         }
     }
 }
@@ -74,20 +74,20 @@ private struct PauseMenuHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Design.Spacing.m) {
             if let cover {
                 Image(nsImage: cover).resizable().interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: coverSide, maxHeight: coverSide)
-                    .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
-                    .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                    .clipShape(Design.cardShape(Design.Radius.thumbnail))
+                    .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+                    .designShadow(.thumbnail)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Marquee(text: game.discTitle, font: .system(size: 15, weight: .semibold))
+            VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
+                Marquee(text: game.discTitle, font: .title3.weight(.semibold))
                 if !compact, let disc = game.currentDisc {
                     Text(verbatim: "\(disc.serial ?? "Unknown") · \(GameInfo.region(disc.identity.region))")
-                        .font(.system(size: 11)).monospacedDigit()
+                        .font(.subheadline).monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -95,14 +95,14 @@ private struct PauseMenuHeader: View {
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
                     let played = game.sessionPlayed(at: ProcessInfo.processInfo.systemUptime)
                     Text(PlayingFor.pausedAfter(played))
-                        .font(.system(size: 11))
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
             Button { game.setSurface(.pauseMenu, open: false) } label: {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.glassProminent)
@@ -111,8 +111,7 @@ private struct PauseMenuHeader: View {
             .help("Resume (esc)")
             .accessibilityLabel("Resume")
         }
-        .padding(.horizontal, 6)
-        .padding(.bottom, compact ? 10 : 16)
+        .padding(.bottom, compact ? Design.Spacing.m : Design.Spacing.l)
         .task(id: game.currentCoverURL) {
             cover = game.currentCoverURL.flatMap { NSImage(contentsOf: $0) }
         }
@@ -151,14 +150,14 @@ private struct PauseMenuList: View {
 
                     heading("Machine")
                     action(.reset, icon: "arrow.counterclockwise", title: "Reset")
-                    action(.quitGame, icon: "eject.fill", title: "Quit Game")
+                    action(.quitGame, icon: "eject", title: "Quit Game")
 
                     heading("About This Game")
                     about
                 }
-                .padding(.top, 4)
-                .padding(.bottom, 12)
-                .padding(.horizontal, 10)
+                .padding(.top, Design.Spacing.xs)
+                .padding(.bottom, Design.Spacing.m)
+                .padding(.horizontal, RowMetrics.inset)
             }
             .scrollEdgeEffectStyle(.soft, for: .vertical)
             .scrollIndicators(.never)
@@ -182,10 +181,10 @@ private struct PauseMenuList: View {
                 Titled("Save States", subtitle: game.saveStatesSummary)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    .font(.caption.weight(.semibold)).imageScale(.small).foregroundStyle(.secondary)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFillStyle())
         .popover(isPresented: panelShown, arrowEdge: .trailing) { SaveStatesPanel(model: model, game: game) }
     }
 
@@ -199,8 +198,8 @@ private struct PauseMenuList: View {
     private var disc: some View {
         row(.disc) {
             RowIcon(name: "opticaldisc")
-            Text("Disc").font(.system(size: 13))
-            Spacer(minLength: 8)
+            Text("Disc").font(.body)
+            Spacer(minLength: Design.Spacing.s)
             Picker("Disc", selection: Binding(
                 get: { nav.discChoice },
                 set: { game.perform(.insertDisc($0)) })) {
@@ -216,8 +215,8 @@ private struct PauseMenuList: View {
     private var speed: some View {
         row(.speed) {
             RowIcon(name: "gauge.with.dots.needle.67percent")
-            Text("Speed").font(.system(size: 13))
-            Spacer(minLength: 8)
+            Text("Speed").font(.body)
+            Spacer(minLength: Design.Spacing.s)
             Picker("Speed", selection: $model.speed) {
                 ForEach(SpeedSetting.choices, id: \.self) { Text("\($0)×").tag($0) }
             }
@@ -232,8 +231,8 @@ private struct PauseMenuList: View {
         row(.resolution) {
             RowIcon(name: "square.resize")
             Titled("Resolution", subtitle: game.outputSize.map { "\($0.width)×\($0.height)" })
-            Spacer(minLength: 8)
-            Text("\(model.internalScale)×").font(.system(size: 13)).monospacedDigit()
+            Spacer(minLength: Design.Spacing.s)
+            Text("\(model.internalScale)×").font(.body).monospacedDigit()
             Stepper("Resolution", value: $model.internalScale, in: InternalResolution.range)
                 .labelsHidden()
                 .controlSize(.small)
@@ -244,16 +243,21 @@ private struct PauseMenuList: View {
     private var volume: some View {
         row(.volume) {
             Button { model.toggleMute() } label: {
-                RowIcon(name: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                RowIcon(name: model.isMuted ? "speaker.slash" : "speaker.wave.2")
+                    .frame(width: RowMetrics.target, height: RowMetrics.target)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressFillStyle())
+            // The target is wider than the icon column; the overhang keeps
+            // the title where the other rows put theirs.
+            .padding(.horizontal, -(RowMetrics.target - RowMetrics.icon) / 2)
             .help(model.isMuted ? "Unmute" : "Mute")
-            Text("Volume").font(.system(size: 13))
-            Spacer(minLength: 8)
+            .accessibilityLabel(model.isMuted ? "Unmute" : "Mute")
+            Text("Volume").font(.body)
+            Spacer(minLength: Design.Spacing.s)
             // The level in words too: the small slider's knob covers the
             // accent fill near either end.
             Text(model.isMuted ? "Muted" : "\(Int((model.volume * 100).rounded()))%")
-                .font(.system(size: 11)).monospacedDigit()
+                .font(.caption).monospacedDigit()
                 .foregroundStyle(.secondary)
             Slider(value: Binding(get: { model.isMuted ? 0 : model.volume },
                                   set: { model.volume = $0 }),
@@ -270,7 +274,7 @@ private struct PauseMenuList: View {
         return row(.pgxp) {
             RowIcon(name: "cube.transparent")
             Titled("PGXP", subtitle: locked ? "Set by this game's preset" : "Steadier 3D geometry")
-            Spacer(minLength: 8)
+            Spacer(minLength: Design.Spacing.s)
             Toggle("PGXP", isOn: $model.pgxpEnabled)
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 .disabled(locked)
@@ -282,7 +286,7 @@ private struct PauseMenuList: View {
         row(.analog) {
             RowIcon(name: "gamecontroller")
             Titled("Analog", subtitle: "DualShock sticks")
-            Spacer(minLength: 8)
+            Spacer(minLength: Design.Spacing.s)
             Toggle("Analog", isOn: Binding(
                 get: { game.analogShown },
                 set: { game.perform(.adjust(.analog, $0 ? 1 : -1)) }))
@@ -296,11 +300,11 @@ private struct PauseMenuList: View {
         Button { confirm(item) } label: {
             row(item) {
                 RowIcon(name: icon)
-                Text(title).font(.system(size: 13))
+                Text(title).font(.body)
                 Spacer(minLength: 0)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFillStyle())
     }
 
     /// Read-only, so nothing here takes the highlight.
@@ -315,15 +319,15 @@ private struct PauseMenuList: View {
                     Text(info.value).monospacedDigit().lineLimit(1)
                         .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 13))
+                .font(.body)
                 // The rows' height, so the section keeps the list's rhythm.
                 .frame(minHeight: RowMetrics.height)
             }
         }
         // Labels in the rows' title column, so the section reads as part of
         // the list above rather than a second heading level.
-        .padding(.leading, 8 + RowMetrics.icon + RowMetrics.gap)
-        .padding(.trailing, 8)
+        .padding(.leading, RowMetrics.inset + RowMetrics.icon + RowMetrics.gap)
+        .padding(.trailing, RowMetrics.inset)
     }
 
     // MARK: Pieces
@@ -335,11 +339,11 @@ private struct PauseMenuList: View {
 
     private func heading(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
+            .padding(.horizontal, RowMetrics.inset)
+            .padding(.top, Design.Spacing.l)
+            .padding(.bottom, Design.Spacing.xs)
     }
 
     /// A row the pointer and the keys both highlight, with a soft tint rather
@@ -347,10 +351,11 @@ private struct PauseMenuList: View {
     private func row(_ item: PauseMenuItem, @ViewBuilder content: () -> some View) -> some View {
         let highlighted = nav.focus == item
         return HStack(spacing: RowMetrics.gap) { content() }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, RowMetrics.inset)
             .frame(minHeight: RowMetrics.height)
-            .background(highlighted ? Color.primary.opacity(0.09) : .clear,
-                        in: .rect(cornerRadius: Design.Radius.row))
+            .background {
+                if highlighted { Design.cardShape(Design.Radius.row).fill(.fill.tertiary) }
+            }
             .contentShape(.rect)
             .id(item)
             .onHover { inside in
@@ -364,12 +369,17 @@ private enum RowMetrics {
     /// The icon column, so the titles line up.
     static let icon: CGFloat = 18
     /// From the icon to the row's title.
-    static let gap: CGFloat = 9
+    static let gap = Design.Spacing.s
+    /// Inside a row and round the list: header, headings, rows and footer
+    /// all start 16 pt from the panel.
+    static let inset = Design.Spacing.s
+    /// The mute button's hit area, wider than the icon it holds.
+    static let target: CGFloat = 28
     /// Every row's height, a title and subtitle included.
     static let height: CGFloat = 34
 }
 
-/// A secondary 13 pt symbol in a fixed column, so the titles line up. Not
+/// A secondary body-size symbol in a fixed column, so the titles line up. Not
 /// the accent: in this app the accent marks what a click acts on, and here
 /// that is the controls and the Resume button.
 private struct RowIcon: View {
@@ -377,7 +387,7 @@ private struct RowIcon: View {
 
     var body: some View {
         Image(systemName: name)
-            .font(.system(size: 13))
+            .font(.body)
             .foregroundStyle(.secondary)
             .frame(width: RowMetrics.icon)
     }
@@ -394,14 +404,25 @@ private struct Titled: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.system(size: 13))
+        VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
+            Text(title).font(.body)
             if let subtitle {
                 Text(verbatim: subtitle)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// A plain row's press feedback. The hover tint is the list's own highlight
+/// (the pointer moves it), so this adds only the firmer fill under a press.
+private struct PressFillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                if configuration.isPressed { Design.cardShape(Design.Radius.row).fill(.fill.secondary) }
+            }
     }
 }

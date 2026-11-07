@@ -10,7 +10,7 @@ struct ClockSpeedControl: View {
     private static let range = Double(CpuOverclockSetting.choices.first!)...Double(CpuOverclockSetting.choices.last!)
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Design.Spacing.m) {
             Slider(value: sliderValue, in: Self.range) {
                 Text(SettingsCopy.cpuOverclockPercent.title)
             }

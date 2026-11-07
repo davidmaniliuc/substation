@@ -21,9 +21,9 @@ struct VolumeSlider: View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.18))
+                Capsule().fill(.fill.secondary)
                 Capsule()
-                    .fill(Color.primary.opacity(isMuted ? 0.3 : 0.95))
+                    .foregroundStyle(isMuted ? .secondary : .primary)
                     // Clamped here as well as in `VolumeSetting`: this is a
                     // width, and a negative one is a layout error rather than
                     // a quiet clamp.
@@ -95,7 +95,7 @@ struct SpeakerGlyph: View {
                 arc(n).opacity(n <= waves ? 1 : 0)
             }
         }
-        .font(.system(size: 15, weight: .medium))
+        .font(.title3.weight(.medium))
         .frame(width: 28, height: 28)
         .mask {
             Rectangle()
@@ -125,7 +125,7 @@ struct SpeakerGlyph: View {
 }
 
 /// The mute slash, drawn from its top-left end as `progress` goes to 1.
-/// Measured off `speaker.slash.fill` at 15pt medium, in the 28x28 frame with
+/// Measured off `speaker.slash.fill` at title3 (15pt) medium, in the 28x28 frame with
 /// the speaker placed as `SpeakerGlyph` places it.
 private struct Slash: Shape {
     var progress: CGFloat

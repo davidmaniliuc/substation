@@ -9,11 +9,8 @@ struct OnboardingView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ZStack {
-                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
-                setup
-            }
-            .frame(minWidth: 380)
+            setup
+                .frame(minWidth: 380)
             .layoutPriority(1)
             Divider().ignoresSafeArea()
             // Gives way first in a narrow window: the folders are the task.
@@ -26,15 +23,15 @@ struct OnboardingView: View {
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 24)
+            Spacer(minLength: Design.Spacing.xxl)
             Text("Set Up Your Library")
                 .font(.title2.weight(.semibold))
             Text("Substation needs a BIOS from your console and a folder of games.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
+                .padding(.top, Design.Spacing.xs)
 
-            VStack(spacing: 4) {
+            VStack(spacing: Design.Spacing.xs) {
                 FolderRow(
                     symbol: "cpu",
                     title: model.biosFolderURL == nil ? "Choose BIOS Folder…" : "Change BIOS Folder…",
@@ -54,10 +51,10 @@ struct OnboardingView: View {
             }
             // The rows' hover highlight reaches past the text column, so the
             // symbols line up with the title above.
-            .padding(.horizontal, -12)
-            .padding(.top, 24)
+            .padding(.horizontal, -Design.Spacing.m)
+            .padding(.top, Design.Spacing.xxl)
 
-            Spacer(minLength: 24)
+            Spacer(minLength: Design.Spacing.xxl)
 
             HStack {
                 Text("You can change these later in Settings.")
@@ -70,7 +67,7 @@ struct OnboardingView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(!model.onboardingReady)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, Design.Spacing.xxl)
         }
         .frame(maxWidth: 460)
         .padding(.horizontal, 32)
@@ -96,16 +93,17 @@ private struct FolderRow: View {
     let choose: () -> Void
     let drop: (URL) -> Void
     @State private var targeted = false
+    @FocusState private var focused: Bool
 
     var body: some View {
         Button(action: choose) {
-            HStack(spacing: 12) {
+            HStack(spacing: Design.Spacing.m) {
                 Image(systemName: symbol)
                     .font(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 38, height: 38)
-                    .background(.fill.tertiary, in: .rect(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 2) {
+                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.tile))
+                VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                     Text(title).font(.headline)
                     Group {
                         if let folder {
@@ -123,14 +121,17 @@ private struct FolderRow: View {
                 Spacer(minLength: 8)
                 if folder != nil { badge }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, Design.Spacing.m)
+            .padding(.vertical, Design.Spacing.s)
             .contentShape(.rect)
         }
-        .buttonStyle(RowButtonStyle())
+        .buttonStyle(RowPressStyle(cornerRadius: Design.Radius.row))
+        .focusEffectDisabled()
+        .focused($focused)
+        .focusRing(focused, cornerRadius: Design.Radius.row)
         .overlay {
             if targeted {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(.tint, lineWidth: 2)
+                Design.cardShape(Design.Radius.row).strokeBorder(.tint, lineWidth: Design.Focus.width)
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -154,22 +155,9 @@ private struct FolderRow: View {
         case .empty:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(.yellow)
+                .symbolRenderingMode(.multicolor)
                 .accessibilityLabel("No BIOS images found")
         }
-    }
-}
-
-/// A borderless row that highlights under the pointer and darkens while
-/// pressed. It never moves: a Mac hover brightens, it does not lift.
-private struct RowButtonStyle: ButtonStyle {
-    @State private var hovering = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(.fill.opacity(configuration.isPressed ? 1 : hovering ? 0.6 : 0),
-                        in: .rect(cornerRadius: 8))
-            .onHover { hovering = $0 }
     }
 }
 
@@ -181,7 +169,7 @@ private struct OnboardingPreview: View {
     var body: some View {
         if model.biosFolderURL == nil && model.gamesFolderURL == nil {
             ContentUnavailableView {
-                Label("Your Library", systemImage: "square.stack")
+                Label("Your Library", systemImage: "square.grid.2x2")
             } description: {
                 Text("The BIOS images and games in your folders appear here.")
             }
@@ -207,11 +195,11 @@ private struct OnboardingPreview: View {
 
     @ViewBuilder private var biosRows: some View {
         if model.biosFolderURL == nil {
-            Text("No folder chosen").foregroundStyle(.tertiary)
+            Text("No folder chosen").foregroundStyle(.secondary)
         } else if model.isSurveyingBios {
             scanning
         } else if model.biosFound.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Design.Spacing.xs) {
                 Label("No BIOS Images Found", systemImage: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)
                 Text("Substation looks for the SCPH files dumped from a PlayStation. Games can’t start without one.")
@@ -220,7 +208,7 @@ private struct OnboardingPreview: View {
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, Design.Spacing.xs)
         } else {
             ForEach(model.biosFound, id: \.self) { found in
                 Label {
@@ -242,7 +230,7 @@ private struct OnboardingPreview: View {
 
     @ViewBuilder private var gameRows: some View {
         if model.gamesFolderURL == nil {
-            Text("No folder chosen").foregroundStyle(.tertiary)
+            Text("No folder chosen").foregroundStyle(.secondary)
         } else if model.library.isScanning {
             scanning
         } else if model.groups.isEmpty {
@@ -275,7 +263,7 @@ private struct OnboardingPreview: View {
     }
 
     private var scanning: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Spacing.s) {
             ProgressView().controlSize(.small)
             Text("Scanning…").foregroundStyle(.secondary)
         }
@@ -287,6 +275,6 @@ private struct OnboardingPreview: View {
             Spacer()
             if let count { Text("\(count)").monospacedDigit() }
         }
-        .padding(.trailing, 10)
+        .padding(.trailing, Design.Spacing.s)
     }
 }

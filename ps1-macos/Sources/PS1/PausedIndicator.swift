@@ -8,6 +8,7 @@ import SwiftUI
 struct PausedIndicator: View {
     @Bindable var model: EmulatorViewModel
     @Bindable var game: OpenGame
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -15,12 +16,13 @@ struct PausedIndicator: View {
         } label: {
             Image(systemName: "play.fill")
                 // The bar button's weight: one symbol at two sizes.
-                .font(.system(size: 40, weight: .medium))
-                .frame(width: 96, height: 96)
+                .font(.largeTitle.weight(.medium))
+                .imageScale(.large)
+                .frame(width: 80, height: 80)
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(reduceMotion ? .regular : .regular.interactive(), in: .circle)
         .help("Resume")
         .accessibilityLabel("Paused. Resume")
     }

@@ -72,21 +72,21 @@ struct AboutView: View {
             Text("Substation")
                 .font(.title2)
                 .bold()
-                .padding(.top, 8)
+                .padding(.top, Design.Spacing.s)
             Text("A native PlayStation emulator for the Mac.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
+                .padding(.top, Design.Spacing.xs)
             details
-                .padding(.top, 16)
+                .padding(.top, Design.Spacing.l)
             Button("GitHub") { openURL(BuildInfo.repository) }
-                .padding(.top, 20)
+                .padding(.top, Design.Spacing.xl)
         }
         .padding(.horizontal, 32)
         .padding(.top, 36)
-        .padding(.bottom, 20)
+        .padding(.bottom, Design.Spacing.xl)
         .frame(width: 260)
         // The desktop shows through, as in Finder's About window.
         .background {
@@ -103,7 +103,7 @@ struct AboutView: View {
     }
 
     private var details: some View {
-        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+        Grid(alignment: .leading, horizontalSpacing: Design.Spacing.s, verticalSpacing: Design.Spacing.xs) {
             row("Version") { Text(info.version).foregroundStyle(.secondary) }
             row("Build") { Text(info.build).foregroundStyle(.secondary) }
             if let commit = info.commit {

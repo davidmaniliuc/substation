@@ -18,16 +18,17 @@ struct SaveStatesPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             section("Auto-Save")
             row(0, nav: nav)
-            section("Slots").padding(.top, 6)
+            section("Slots").padding(.top, Design.Spacing.xs)
             ForEach(Array(StateSource.slots), id: \.self) { row($0, nav: nav) }
-            Divider().padding(.top, 8)
+            Divider().padding(.top, Design.Spacing.s)
             if let nav {
                 StateBar(buttons: nav.buttons, highlighted: nav.button,
                          showsFocus: nav.showsFocus && nav.sheet == nil) { game.pressButton($0) }
-                    .padding(12)
+                    .padding(.horizontal, Panel.inset)
+                    .padding(.vertical, Design.Spacing.m)
             }
         }
-        .padding(.top, 6)
+        .padding(.top, Design.Spacing.xs)
         .frame(width: 340)
         .overlay {
             if let sheet = nav?.sheet {
@@ -42,8 +43,8 @@ struct SaveStatesPanel: View {
     }
 
     private func section(_ title: String) -> some View {
-        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 4)
+        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, Panel.inset).padding(.top, Design.Spacing.s).padding(.bottom, Design.Spacing.xs)
     }
 
     private func row(_ n: Int, nav: SaveStatesNavigation?) -> some View {
@@ -59,6 +60,13 @@ struct SaveStatesPanel: View {
     }
 
     private func info(_ row: Int) -> StateFile.Info? { game.stateInfo(SaveStatesNavigation.source(row)) }
+}
+
+/// The panel's one leading edge: headings, row contents and the button bar.
+private enum Panel {
+    static let inset = Design.Spacing.l
+    /// A row's own padding; the rest of `inset` sits outside its highlight.
+    static let rowPadding = Design.Spacing.s
 }
 
 /// "Auto-saved Today at 14:32" for Resume, the time alone for a slot.
@@ -81,22 +89,27 @@ private struct StateRow: View {
     @State private var hover = false
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Design.Spacing.m) {
             StateThumbnail(url: info?.thumbnail).frame(width: 56, height: 42)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(source.title).font(.system(size: 13, weight: .medium))
-                Text(savedLine(source, info)).font(.system(size: 11))
-                    .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+            VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
+                Text(source.title).font(.body.weight(.medium))
+                Text(savedLine(source, info)).font(.caption)
+                    .foregroundStyle(selected
+                        ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
+                        : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? .white : .primary)
-        .padding(.horizontal, 6).padding(.vertical, 4)
+        // The system's selected-row colours, which keep their contrast on
+        // any accent.
+        .foregroundStyle(selected ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                         : AnyShapeStyle(.primary))
+        .padding(.horizontal, Panel.rowPadding).padding(.vertical, Design.Spacing.xs)
         // A list's selection: the accent fill. Hover only brightens.
-        .background(RoundedRectangle(cornerRadius: Design.Radius.row)
-            .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.85))
-                  : AnyShapeStyle(.primary.opacity(hover && enabled ? 0.06 : 0))))
-        .padding(.horizontal, 10)
+        .background(Design.cardShape(Design.Radius.row)
+            .fill(selected ? AnyShapeStyle(Color(nsColor: .selectedContentBackgroundColor))
+                  : hover && enabled ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear)))
+        .padding(.horizontal, Panel.inset - Panel.rowPadding)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: activate)
         .simultaneousGesture(TapGesture().onEnded(select))
@@ -128,11 +141,11 @@ private struct StateThumbnail: View {
         ZStack {
             if let url, let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().interpolation(.high)
-                    .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
+                    .clipShape(Design.cardShape(Design.Radius.thumbnail))
                     // The hairline system thumbnails carry, so a dark frame keeps its edge.
-                    .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
+                    .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
             } else {
-                RoundedRectangle(cornerRadius: Design.Radius.thumbnail).fill(.quaternary.opacity(0.6))
+                Design.cardShape(Design.Radius.thumbnail).fill(.fill.quaternary)
             }
         }
     }
@@ -150,7 +163,7 @@ private struct StateBar: View {
     let press: (StateButton) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Spacing.buttonGap) {
             if buttons.contains(.delete) { button(.delete) }
             Spacer(minLength: 0)
             ForEach(buttons.filter { $0 != .delete }, id: \.self) { button($0) }
@@ -166,14 +179,13 @@ private struct StateBar: View {
                 base.buttonStyle(.bordered)
             }
         }
-        .overlay {
-            if showsFocus && b == highlighted && b != buttons.last {
-                Capsule().strokeBorder(Color.accentColor, lineWidth: 2).padding(-3)
-            }
-        }
+        .focusRing(showsFocus && b == highlighted && b != buttons.last, cornerRadius: Self.capsuleRadius)
         // One shape for every button, so the ring can follow it.
         .buttonBorderShape(.capsule)
     }
+
+    /// Past half a button's height, which makes the ring a capsule.
+    private static let capsuleRadius: CGFloat = 40
 
     static func title(_ b: StateButton) -> String {
         switch b {

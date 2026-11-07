@@ -48,10 +48,10 @@ struct GameScreen: View {
                     .animation(.easeInOut(duration: 0.25), value: chrome)
 
                 GameHUD(model: model, game: game, isVisible: chrome, isFullScreen: settledFullScreen)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, Design.Spacing.xxl)
 
                 if menuOpen {
-                    Color.black.opacity(0.2)
+                    Design.Dim.light
                         .ignoresSafeArea()
                         .onTapGesture { game.setSurface(.pauseMenu, open: false) }
                         .transition(.opacity)
@@ -67,7 +67,7 @@ struct GameScreen: View {
                 if game.showsPaused && !menuOpen && !game.isOpen(.saveStates)
                     && !model.isDialogShown {
                     PausedIndicator(model: model, game: game)
-                        .transition(.scale(scale: 1.25).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .scale(scale: 1.25).combined(with: .opacity))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
@@ -75,8 +75,8 @@ struct GameScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     // In fullscreen as high as the screen allows, level with
                     // the title; windowed, the traffic lights' band is above.
-                    .padding(.trailing, isFullScreen ? TitleStrip.trailing : 16)
-                    .padding(.top, isFullScreen ? TitleStrip.fullScreenTop : 16)
+                    .padding(.trailing, TitleStrip.trailing)
+                    .padding(.top, isFullScreen ? TitleStrip.fullScreenTop : Design.Spacing.l)
             }
 
             // Here rather than over the library: the sheet asks about the

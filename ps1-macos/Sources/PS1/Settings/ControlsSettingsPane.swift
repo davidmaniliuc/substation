@@ -47,7 +47,7 @@ struct ControlsSettingsPane: View {
                 SettingRow(SettingsCopy.resetKey) { KeyCap("⌘R") }
                 SettingRow(SettingsCopy.quitGameKey) { KeyCap("⌘E") }
                 SettingRow(SettingsCopy.pauseMenuKey) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Design.Spacing.xs) {
                         KeyCap("Esc")
                         KeyCap("Home")
                     }
@@ -56,7 +56,7 @@ struct ControlsSettingsPane: View {
 
             Section {
                 SettingRow(SettingsCopy.controllers) {
-                    Image(systemName: "gamecontroller.fill")
+                    Image(systemName: "gamecontroller")
                         .font(.title2)
                         .foregroundStyle(.secondary)
                 }
@@ -85,7 +85,7 @@ private struct KeyBindingField: View {
                 KeyCap("Not Set").foregroundStyle(.secondary)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RowPressStyle(cornerRadius: KeyCapShape<EmptyView>.radius))
         .help(isCapturing ? "Press a key, or click elsewhere to cancel" : "Click to change")
     }
 }
@@ -97,7 +97,7 @@ private struct WaitingDots: View {
     var body: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate / Self.period
-            HStack(spacing: 4) {
+            HStack(spacing: Design.Spacing.xs) {
                 ForEach(0..<3) { i in
                     // Each dot peaks a third of a period after the one before.
                     let phase = (t - Double(i) / 3).truncatingRemainder(dividingBy: 1)
@@ -121,7 +121,7 @@ private struct KeyCap: View {
     var body: some View {
         KeyCapShape {
             Text(label)
-                .font(.system(.body, design: .rounded).weight(.medium))
+                .font(.body.weight(.medium))
                 .monospacedDigit()
         }
     }
@@ -129,15 +129,18 @@ private struct KeyCap: View {
 
 /// The keycap's outline, around whatever it holds.
 private struct KeyCapShape<Content: View>: View {
+    static var radius: CGFloat { Design.Radius.thumbnail }
+
     @ViewBuilder let content: Content
 
     var body: some View {
+        let shape = Design.cardShape(Self.radius)
         content
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
+            .padding(.horizontal, Design.Spacing.s)
+            .padding(.vertical, Design.Spacing.xxs)
             .frame(minWidth: 44)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
-            .contentShape(RoundedRectangle(cornerRadius: 5))
+            .background(.quaternary, in: shape)
+            .overlay(shape.strokeBorder(.separator))
+            .contentShape(shape)
     }
 }

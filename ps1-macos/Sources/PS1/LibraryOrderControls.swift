@@ -22,53 +22,85 @@ struct LibraryOrderMenu: View {
 
 /// The header's sort: the order's name opens the menu, and the arrow beside
 /// it flips the direction in one click. One quiet pill, so it reads as a
-/// single control.
+/// single control; each half answers hover and press on its own.
 struct LibraryOrderPill: View {
     @Binding var order: LibraryOrder
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let height: CGFloat = 28
 
     var body: some View {
         HStack(spacing: 0) {
             Menu {
                 LibraryOrderMenu(order: $order)
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: Design.Spacing.xs) {
                     Text(order.sort.title)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.caption.weight(.semibold))
+                        .imageScale(.small)
                 }
-                .padding(.leading, 11)
-                .padding(.trailing, 8)
+                .padding(.leading, Design.Spacing.m)
+                .padding(.trailing, Design.Spacing.s)
                 .frame(maxHeight: .infinity)
                 .contentShape(.rect)
             }
             .menuStyle(.button)
             .menuIndicator(.hidden)
-            .buttonStyle(.plain)
+            .buttonStyle(PillSegmentStyle())
             .fixedSize()
             .help("Sort By")
+            .accessibilityLabel("Sort By")
+            .accessibilityValue(order.sort.title)
 
             Rectangle()
-                .fill(.primary.opacity(0.15))
-                .frame(width: 1, height: 12)
+                .fill(.separator)
+                .frame(width: 1, height: Design.Spacing.m)
 
             Button {
-                withAnimation(.snappy) { order.reversed.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy) { order.reversed.toggle() }
             } label: {
                 Image(systemName: "arrow.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .rotationEffect(.degrees(order.reversed ? 180 : 0))
-                    .frame(width: 28)
+                    .frame(width: Self.height)
                     .frame(maxHeight: .infinity)
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PillSegmentStyle())
             .help(order.direction)
             .accessibilityLabel("Direction")
             .accessibilityValue(order.direction)
         }
         .font(.callout)
         .foregroundStyle(.secondary)
-        .frame(height: 24)
-        .background(.primary.opacity(0.07), in: .capsule)
+        .frame(height: Self.height)
+        .background(.fill.quaternary, in: .capsule)
+        .clipShape(.capsule)
+    }
+}
+
+/// One half of the sort pill: a soft fill on hover, a firmer one while
+/// pressed, clipped to the pill's capsule by its parent.
+private struct PillSegmentStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Segment(configuration: configuration)
+    }
+
+    private struct Segment: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background {
+                    if configuration.isPressed {
+                        Rectangle().fill(.fill.secondary)
+                    } else if hovering {
+                        Rectangle().fill(.fill.tertiary)
+                    }
+                }
+                .onHover { hovering = $0 }
+        }
     }
 }

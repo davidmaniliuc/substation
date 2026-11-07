@@ -8,10 +8,10 @@ import SwiftUI
 enum SpeedPick {
     static let width: CGFloat = 40
     /// The tab's margin either side of the button.
-    static let pad: CGFloat = 4
+    static let pad: CGFloat = Design.Spacing.xs
     static let slot: CGFloat = 28
     static let seat: CGFloat = 30
-    static let separator: CGFloat = 9
+    static let separator: CGFloat = Design.Spacing.s
     /// The bar's vertical padding, between the button and the bar's edge.
     static let barPad: CGFloat = 10
     /// How far the tab rises above the bar's top edge.
@@ -48,30 +48,24 @@ enum SpeedPick {
 }
 
 /// The bar's buttons, as Apple Music's player draws them: nothing on hover,
-/// a dark disc only while the button is held down. Over a moving picture a
-/// hover highlight follows the pointer across the bar and reads as noise.
+/// a dark disc only while the button is held down, dimmed when disabled. Over
+/// a moving picture a hover highlight follows the pointer across the bar and
+/// reads as noise.
 struct PressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(Circle()
-                .fill(.black.opacity(configuration.isPressed ? 0.35 : 0))
-                .frame(width: IconButton.height, height: IconButton.height))
+        Pressed(configuration: configuration)
     }
-}
 
-/// A soft capsule behind a control while the pointer is over it.
-struct HoverStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { HoverBody(configuration: configuration) }
-
-    private struct HoverBody: View {
+    private struct Pressed: View {
         let configuration: Configuration
-        @State private var hover = false
+        @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
             configuration.label
-                .background(Capsule().fill(.white.opacity(configuration.isPressed ? 0.26 : hover ? 0.14 : 0)))
-                .onHover { hover = $0 }
-                .animation(.easeOut(duration: 0.12), value: hover)
+                .background(Circle()
+                    .fill(configuration.isPressed ? Design.Dim.scrim : .clear)
+                    .frame(width: IconButton.height, height: IconButton.height))
+                .opacity(isEnabled ? 1 : 0.45)
         }
     }
 }
@@ -84,17 +78,20 @@ struct IconButton: View {
 
     let symbol: String
     let help: String
-    var size: CGFloat = 15
+    var font: Font = .title3
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: size, weight: .medium))
+                .font(font.weight(.medium))
+                .symbolVariant(.fill)
                 // Animated on the symbol itself: pause and full screen
                 // change from keys and menus too, outside any transaction.
-                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp)))
-                .animation(.snappy(duration: 0.25), value: symbol)
+                .contentTransition(reduceMotion ? .identity
+                                                : .symbolEffect(.replace.magic(fallback: .downUp)))
+                .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: symbol)
                 .frame(width: Self.width, height: Self.height)
                 .contentShape(.capsule)
         }
@@ -136,6 +133,9 @@ struct BarShape: Shape {
     var reach: CGFloat
     var barHeight: CGFloat
 
+    /// The tab's top corners; the highlight inside it is concentric.
+    static let cornerRadius = Design.Radius.panel
+
     var animatableData: CGFloat {
         get { rise }
         set { rise = newValue }
@@ -149,8 +149,8 @@ struct BarShape: Shape {
         p.move(to: CGPoint(x: rect.minX + r, y: top))
         if rise > 0.5 {
             let l = tabMinX, rr = tabMinX + tabWidth, t = top - rise
-            let fillet = min(10, rise / 2)
-            let corner = min(14, rise / 2, tabWidth / 2)
+            let fillet = min(Design.Radius.tile, rise / 2)
+            let corner = min(Self.cornerRadius, rise / 2, tabWidth / 2)
             p.addArc(tangent1End: CGPoint(x: l, y: top), tangent2End: CGPoint(x: l, y: t), radius: fillet)
             p.addArc(tangent1End: CGPoint(x: l, y: t), tangent2End: CGPoint(x: rr, y: t), radius: corner)
             p.addArc(tangent1End: CGPoint(x: rr, y: t), tangent2End: CGPoint(x: rr, y: top), radius: corner)
@@ -179,18 +179,29 @@ struct SpeedButton: View {
     @State private var pressing = false
     @State private var wasOpen = false
     @State private var dragged = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let space = "speed"
     private var open: Bool { game.isOpen(.speedTab) }
 
     var body: some View {
         Text("\(model.speed)×")
-            .font(.system(size: 13, weight: .semibold).monospacedDigit())
+            .font(.body.weight(.semibold).monospacedDigit())
             .frame(width: SpeedPick.width, height: SpeedPick.seat)
             .contentShape(.rect)
             .gesture(press)
             .help("Emulation Speed (hold Tab to fast-forward)")
-            .accessibilityLabel("Emulation speed \(model.speed) times")
+            .accessibilityLabel("Emulation speed")
+            .accessibilityValue("\(model.speed) times")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { game.setSurface(.speedTab, open: !open) }
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: model.speed = min(model.speed + 1, SpeedSetting.choices.upperBound)
+                case .decrement: model.speed = max(model.speed - 1, SpeedSetting.choices.lowerBound)
+                @unknown default: break
+                }
+            }
             .overlay(alignment: .bottom) {
                 if open {
                     values.offset(y: -SpeedPick.seat).transition(.opacity)
@@ -200,7 +211,7 @@ struct SpeedButton: View {
             .anchorPreference(key: SpeedTabKey.self, value: .bounds) {
                 SpeedTab(anchor: $0, rise: open ? SpeedPick.rise : 0)
             }
-            .animation(.snappy(duration: 0.22), value: open)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: open)
             // The model closes the tab when the pointer strays too far,
             // through the same hover it uses to show the HUD.
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(GameScreen.space)) } action: {
@@ -212,11 +223,12 @@ struct SpeedButton: View {
         VStack(spacing: 0) {
             ForEach([4, 3, 2, 1], id: \.self) { n in
                 Text("\(n)×")
-                    .font(.system(size: 13, weight: model.speed == n ? .bold : .semibold).monospacedDigit())
+                    .font(.body.weight(.semibold).monospacedDigit())
                     .frame(width: SpeedPick.width, height: SpeedPick.slot)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(highlight(n))))
+                    .background { highlight(n) }
             }
-            Rectangle().fill(.white.opacity(0.3)).frame(width: SpeedPick.width - 14, height: 1)
+            Rectangle().fill(.separator)
+                .frame(width: SpeedPick.width - 2 * Design.Spacing.s, height: 1)
                 .frame(height: SpeedPick.separator)
         }
         .padding(.top, SpeedPick.pad)
@@ -228,10 +240,15 @@ struct SpeedButton: View {
         }
     }
 
-    /// Under the pointer brightest, the current speed faintly.
-    private func highlight(_ n: Int) -> Double {
-        if tracking == n - 1 { return 0.30 }
-        return model.speed == n ? 0.12 : 0
+    /// Under the pointer brightest, the current speed faintly. Concentric
+    /// with the tab's corner, `SpeedPick.pad` inside it.
+    @ViewBuilder private func highlight(_ n: Int) -> some View {
+        let shape = Design.cardShape(Design.concentric(BarShape.cornerRadius, inset: SpeedPick.pad))
+        if tracking == n - 1 {
+            shape.fill(.fill)
+        } else if model.speed == n {
+            shape.fill(.fill.tertiary)
+        }
     }
 
     private var press: some Gesture {

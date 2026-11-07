@@ -14,9 +14,11 @@ struct ModalDialog<Content: View>: View {
     var dismiss: (() -> Void)?
     @ViewBuilder let content: Content
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35)
+            Design.Dim.scrim
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss?() }
@@ -25,6 +27,6 @@ struct ModalDialog<Content: View>: View {
                 .dialogSurface()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
     }
 }

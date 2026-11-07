@@ -17,7 +17,7 @@ enum LibraryTab: Int, CaseIterable {
         switch self {
         case .all: "square.grid.2x2"
         case .recent: "clock"
-        case .multiDisc: "opticaldisc"
+        case .multiDisc: "square.stack.3d.up"
         }
     }
 }

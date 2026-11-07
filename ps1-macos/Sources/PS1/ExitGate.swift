@@ -1,7 +1,6 @@
 import Foundation
 
-/// Every way of leaving a running game, and the question the exit sheet asks
-/// for each.
+/// Every way of leaving a running game, and what the exit sheet asks for each.
 enum ExitIntent: Equatable {
     case quit
     case closeWindow
@@ -10,12 +9,18 @@ enum ExitIntent: Equatable {
     /// Resume Game from Spotlight, Shortcuts or Siri.
     case resume(GameGroup)
 
-    var question: String {
+    /// Quitting the app ends the game with it; every other intent leaves
+    /// the game only.
+    private var endsApplication: Bool {
         switch self {
-        case .quit, .closeWindow: "Are you sure you want to exit the application?"
-        case .eject, .open, .resume: "Are you sure you want to exit the game?"
+        case .quit, .closeWindow: true
+        case .eject, .open, .resume: false
         }
     }
+
+    var title: String { endsApplication ? "Quit Substation?" : "Exit Game?" }
+    /// The default button, named for what it does.
+    var verb: String { endsApplication ? "Quit" : "Exit Game" }
 }
 
 enum ExitDecision {

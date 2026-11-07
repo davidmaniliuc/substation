@@ -34,6 +34,7 @@ struct LibrarySearchBox: View {
 
     /// The folded glass was clicked open.
     @State private var opened = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -46,7 +47,7 @@ struct LibrarySearchBox: View {
                     .frame(width: LibrarySearchLayout.fieldWidth)
             } else {
                 Button {
-                    withAnimation(.snappy) { opened = true }
+                    withAnimation(reduceMotion ? nil : .snappy) { opened = true }
                 } label: {
                     Label("Search", systemImage: "magnifyingglass")
                         .labelStyle(.iconOnly)
@@ -55,12 +56,12 @@ struct LibrarySearchBox: View {
             }
         }
         .onAppear { opened = LibrarySearchLayout.staysOpen(withQuery: text) }
-        .onChange(of: focusRequest) { withAnimation(.snappy) { opened = true } }
+        .onChange(of: focusRequest) { withAnimation(reduceMotion ? nil : .snappy) { opened = true } }
     }
 
     private func endEditing() {
         guard !LibrarySearchLayout.staysOpen(withQuery: text) else { return }
-        withAnimation(.snappy) { opened = false }
+        withAnimation(reduceMotion ? nil : .snappy) { opened = false }
     }
 }
 

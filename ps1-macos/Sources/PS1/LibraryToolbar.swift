@@ -23,7 +23,7 @@ struct LibraryToolbar: ToolbarContent {
             // The title alone: the panel's header counts what the open tab
             // shows, and a second count here only repeated it.
             Text("Library").font(.headline)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, Design.Spacing.s)
         }
         .sharedBackgroundVisibility(.hidden)
 
@@ -81,31 +81,31 @@ struct ContinueButton: View {
     /// side: the toolbar draws its capsule tight around this item, so the
     /// inset is ours to give, and an even one is what keeps both circles
     /// concentric with the capsule's round ends.
-    private static let side: CGFloat = 26
-    private static let inset: CGFloat = 5
+    private static let side: CGFloat = 28
+    private static let inset = Design.Spacing.xs
 
     var body: some View {
         Button(action: resume) {
-            HStack(spacing: 9) {
+            HStack(spacing: Design.Spacing.s) {
                 art
                     .frame(width: Self.side, height: Self.side)
                     .clipShape(.circle)
-                    .overlay(Circle().strokeBorder(.primary.opacity(0.12)))
+                    .overlay(Circle().strokeBorder(.separator))
                 VStack(alignment: .leading, spacing: 0) {
                     Text(group.title)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .lineLimit(1)
                     if let lastPlayed {
                         Text("Played \(LibraryFormat.relative(lastPlayed))")
-                            .font(.system(size: 10.5))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
                 .frame(maxWidth: 200, alignment: .leading)
-                .padding(.trailing, 2)
+                .padding(.trailing, Design.Spacing.xxs)
                 Image(systemName: "play.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: Self.side, height: Self.side)
                     .background(.tint, in: .circle)
@@ -113,9 +113,34 @@ struct ContinueButton: View {
             .padding(Self.inset)
             .contentShape(.capsule)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CapsulePressStyle())
         .help("Resume \(group.title)")
         .accessibilityLabel("Resume \(group.title)")
+    }
+
+    /// Hover and press fills inside the capsule, as the glass has none of
+    /// its own for a plain button.
+    private struct CapsulePressStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            Fill(configuration: configuration)
+        }
+
+        private struct Fill: View {
+            let configuration: Configuration
+            @State private var hovering = false
+
+            var body: some View {
+                configuration.label
+                    .background {
+                        if configuration.isPressed {
+                            Capsule().fill(.fill.secondary)
+                        } else if hovering {
+                            Capsule().fill(.fill.tertiary)
+                        }
+                    }
+                    .onHover { hovering = $0 }
+            }
+        }
     }
 
     @ViewBuilder private var art: some View {
