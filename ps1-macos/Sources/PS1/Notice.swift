@@ -16,7 +16,7 @@ enum NoticeIcon {
     static let loaded = "clock.arrow.circlepath"
     static let undone = "arrow.uturn.backward"
     static let failure = "exclamationmark.triangle.fill"
-    static let disc = "circle.circle"
+    static let disc = "opticaldisc"
     static let screenshot = "camera.fill"
     static let autoSaved = "clock.badge.checkmark.fill"
     static let reset = "arrow.counterclockwise"

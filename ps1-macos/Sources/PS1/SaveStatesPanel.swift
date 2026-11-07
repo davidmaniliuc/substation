@@ -135,8 +135,8 @@ private struct StateRow: View {
 
 private struct StateThumbnail: View {
     let url: URL?
-    /// Concentric with the row's highlight, `Design.Spacing.xs` inside it.
-    private let radius = Design.concentric(Design.Radius.row, inset: Design.Spacing.xs)
+    /// The thumbnail step, as the resume sheet's list draws the same picture.
+    private let radius = Design.Radius.thumbnail
 
     var body: some View {
         ZStack {

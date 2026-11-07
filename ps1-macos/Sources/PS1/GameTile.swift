@@ -33,9 +33,9 @@ struct GameTile: View {
     private static let corner = Design.Radius.tile
     private static let dragPreviewSide: CGFloat = 150
     /// A cut-out's selection highlight sits `highlightInset` past its
-    /// square, concentric with it, on the scale's next step up.
-    private static let highlightRadius = Design.Radius.raised
-    private static let highlightInset = highlightRadius - corner
+    /// square, concentric with it.
+    private static let highlightInset = Design.Spacing.s
+    private static let highlightRadius = corner + highlightInset
 
     var body: some View {
         let image = coverURL.flatMap(NSImage.init(contentsOf:))

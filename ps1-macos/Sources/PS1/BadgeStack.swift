@@ -44,7 +44,7 @@ struct BadgeStack: View {
         // an empty column has no size, so nothing is drawn without a badge.
         .background {
             if showsBadges {
-                EllipticalGradient(colors: [Design.Dim.band, .clear])
+                EllipticalGradient(colors: [Design.Dim.scrim, .clear])
                     .padding(-Design.Spacing.xxxl)
                     .allowsHitTesting(false)
                     .transition(.opacity)
@@ -71,6 +71,7 @@ struct Badge: View {
     var body: some View {
         Label(text, systemImage: icon)
             .symbolVariant(.fill)
+            .symbolRenderingMode(icon.hasPrefix("exclamationmark") ? .multicolor : .monochrome)
             .symbolEffect(.pulse, isActive: pulse && !reduceMotion)
             .font(.callout.weight(.semibold).monospacedDigit())
             .padding(.horizontal, Design.Spacing.m)

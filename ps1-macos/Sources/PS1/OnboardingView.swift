@@ -102,7 +102,7 @@ private struct FolderRow: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
-                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.row))
+                    .background(.fill.tertiary, in: Design.cardShape(Design.Radius.thumbnail))
                 VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
                     Text(title).font(.headline)
                     Group {
@@ -125,7 +125,7 @@ private struct FolderRow: View {
             .padding(.vertical, Design.Spacing.s)
             .contentShape(.rect)
         }
-        .buttonStyle(RowPressStyle(cornerRadius: Design.Radius.row))
+        .buttonStyle(FillPressStyle())
         .focusEffectDisabled()
         .focused($focused)
         .focusRing(focused, cornerRadius: Design.Radius.row)
@@ -150,7 +150,7 @@ private struct FolderRow: View {
         case .found:
             Image(systemName: "checkmark.circle.fill")
                 .font(.title3)
-                .foregroundStyle(.green)
+                .symbolRenderingMode(.multicolor)
                 .accessibilityLabel("Ready")
         case .empty:
             Image(systemName: "exclamationmark.triangle.fill")

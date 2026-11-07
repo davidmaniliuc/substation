@@ -11,18 +11,23 @@ enum Design {
     /// size, so nested shapes stay roughly concentric.
     enum Radius {
         /// A small cover or a state's thumbnail in a row.
-        static let thumbnail: CGFloat = 5
+        static let thumbnail: CGFloat = 4
         /// A highlighted row, an inset list.
         static let row: CGFloat = 8
         /// A cover in the grid.
         static let tile: CGFloat = 10
         /// The library's panel, a large screenshot.
         static let panel: CGFloat = 12
-        /// A confirmation laid over a dialog, and the highlight a cut-out
-        /// cover sits in: a step in from a dialog.
-        static let raised: CGFloat = dialog - Spacing.xs
+        /// A smaller card than a dialog: a confirmation laid over one.
+        static let raised: CGFloat = 18
         /// A modal card: the resume sheet, the exit prompt.
         static let dialog: CGFloat = 22
+
+        /// A cover outside the grid, by its side: small in a list row, a
+        /// step rounder once it heads a surface.
+        static func cover(_ side: CGFloat) -> CGFloat {
+            side < 56 ? thumbnail : row
+        }
     }
 
     /// The one rounded shape every surface takes, so the corner style is
@@ -33,8 +38,10 @@ enum Design {
 
     /// The corner of a shape set `inset` inside one with `outer`'s corner,
     /// so the two stay concentric.
-    static func concentric(_ outer: CGFloat, inset: CGFloat) -> CGFloat {
-        max(outer - inset, 2)
+    /// Past a large inset the result would be all but square, so it stops
+    /// at `floor`.
+    static func concentric(_ outer: CGFloat, inset: CGFloat, floor: CGFloat = 2) -> CGFloat {
+        max(outer - inset, floor)
     }
 
     /// Spacing on a 4 pt grid.
@@ -73,14 +80,11 @@ enum Design {
     /// How far a control fades when it is disabled.
     static let disabledOpacity = 0.45
 
-    /// The two dimming layers: behind a modal, and behind a sidebar the
-    /// picture should still read through.
+    /// The two dimming layers: behind a modal and under clear glass over the
+    /// picture, and behind a sidebar the picture should still read through.
     enum Dim {
         static let scrim = Color.black.opacity(0.35)
         static let light = Color.black.opacity(0.2)
-        /// The band behind controls over the game picture, so they read on
-        /// a bright frame.
-        static let band = Color.black.opacity(0.45)
     }
 
     /// Lift, smallest to largest.
@@ -90,7 +94,7 @@ enum Design {
         var opacity: Double {
             switch self {
             case .text: 0.3
-            case .thumbnail: 0.25
+            case .thumbnail: 0.3
             case .tile: 0.3
             case .card: 0.3
             }
@@ -147,35 +151,49 @@ extension View {
     }
 }
 
-/// A plain row or capsule button that answers the pointer as a menu row
+/// A plain row, capsule or segment that answers the pointer as a menu row
 /// does: a soft fill on hover, a firmer one while pressed, dimmed when
-/// disabled.
-struct RowPressStyle: ButtonStyle {
-    var cornerRadius: CGFloat = Design.Radius.row
+/// disabled. `hovers` is off where something else already draws the hover,
+/// as the pause menu's highlight does.
+struct FillPressStyle<S: Shape>: ButtonStyle {
+    let shape: S
+    var hovers = true
 
-    func makeBody(configuration: Configuration) -> some View {
-        Row(configuration: configuration, cornerRadius: cornerRadius)
+    init(_ shape: S, hovers: Bool = true) {
+        self.shape = shape
+        self.hovers = hovers
     }
 
-    private struct Row: View {
+    func makeBody(configuration: Configuration) -> some View {
+        Fill(configuration: configuration, shape: shape, hovers: hovers)
+    }
+
+    private struct Fill: View {
         let configuration: Configuration
-        let cornerRadius: CGFloat
+        let shape: S
+        let hovers: Bool
         @State private var hovering = false
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
             configuration.label
-                .contentShape(Design.cardShape(cornerRadius))
+                .contentShape(shape)
                 .background {
                     if configuration.isPressed {
-                        Design.cardShape(cornerRadius).fill(.fill.secondary)
-                    } else if hovering && isEnabled {
-                        Design.cardShape(cornerRadius).fill(.fill.tertiary)
+                        shape.fill(.fill.secondary)
+                    } else if hovers && hovering && isEnabled {
+                        shape.fill(.fill.tertiary)
                     }
                 }
                 .opacity(isEnabled ? 1 : Design.disabledOpacity)
                 .onHover { hovering = $0 }
         }
+    }
+}
+
+extension FillPressStyle where S == RoundedRectangle {
+    init(cornerRadius: CGFloat = Design.Radius.row, hovers: Bool = true) {
+        self.init(Design.cardShape(cornerRadius), hovers: hovers)
     }
 }
 

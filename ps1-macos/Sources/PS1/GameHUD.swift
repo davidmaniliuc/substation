@@ -136,7 +136,9 @@ struct GameHUD: View {
         .padding(.leading, pillPadding)
         .padding(.trailing, pillRight)
         .padding(.vertical, SpeedPick.barPad - pillInset)
-        .glassEffect(.clear, in: .capsule)
+        // Regular, not clear: the layer on top, so where it covers the bar
+        // the picture is not refracted twice.
+        .glassEffect(.regular, in: .capsule)
         // The whole capsule, so a click in the pill's padding lands on the
         // pill rather than on the bar button it is covering.
         .contentShape(.capsule)

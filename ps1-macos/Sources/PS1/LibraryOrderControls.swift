@@ -47,7 +47,7 @@ struct LibraryOrderPill: View {
             }
             .menuStyle(.button)
             .menuIndicator(.hidden)
-            .buttonStyle(PillSegmentStyle())
+            .buttonStyle(FillPressStyle(Rectangle()))
             .fixedSize()
             .help("Sort By")
             .accessibilityLabel("Sort By")
@@ -55,7 +55,7 @@ struct LibraryOrderPill: View {
 
             Rectangle()
                 .fill(.separator)
-                .frame(width: 1, height: Design.Spacing.m)
+                .frame(width: Design.hairline, height: Design.Spacing.m)
 
             Button {
                 withAnimation(reduceMotion ? nil : .snappy) { order.reversed.toggle() }
@@ -67,7 +67,7 @@ struct LibraryOrderPill: View {
                     .frame(maxHeight: .infinity)
                     .contentShape(.rect)
             }
-            .buttonStyle(PillSegmentStyle())
+            .buttonStyle(FillPressStyle(Rectangle()))
             .help(order.direction)
             .accessibilityLabel("Direction")
             .accessibilityValue(order.direction)
@@ -82,25 +82,3 @@ struct LibraryOrderPill: View {
 
 /// One half of the sort pill: a soft fill on hover, a firmer one while
 /// pressed, clipped to the pill's capsule by its parent.
-private struct PillSegmentStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Segment(configuration: configuration)
-    }
-
-    private struct Segment: View {
-        let configuration: Configuration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .background {
-                    if configuration.isPressed {
-                        Rectangle().fill(.fill.secondary)
-                    } else if hovering {
-                        Rectangle().fill(.fill.tertiary)
-                    }
-                }
-                .onHover { hovering = $0 }
-        }
-    }
-}

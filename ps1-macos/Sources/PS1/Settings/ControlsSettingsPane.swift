@@ -85,7 +85,7 @@ private struct KeyBindingField: View {
                 KeyCap("Not Set").foregroundStyle(.secondary)
             }
         }
-        .buttonStyle(RowPressStyle(cornerRadius: KeyCapShape<EmptyView>.radius))
+        .buttonStyle(FillPressStyle(cornerRadius: KeyCapShape<EmptyView>.radius))
         .help(isCapturing ? "Press a key, or click elsewhere to cancel" : "Click to change")
     }
 }

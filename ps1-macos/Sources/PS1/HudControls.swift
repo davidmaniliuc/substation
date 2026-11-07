@@ -135,8 +135,8 @@ struct BarShape: Shape {
 
     /// The tab's top corners; the highlight inside it is concentric.
     static let cornerRadius = Design.Radius.panel
-    /// The concave joint where the tab leaves the bar.
-    static let fillet: CGFloat = 10
+    /// The concave joint where the tab leaves the bar: a cover's corner.
+    static let fillet = Design.Radius.tile
 
     var animatableData: CGFloat {
         get { rise }
@@ -230,7 +230,7 @@ struct SpeedButton: View {
                     .background { highlight(n) }
             }
             Rectangle().fill(.separator)
-                .frame(width: SpeedPick.width - 2 * Design.Spacing.s, height: 1)
+                .frame(width: SpeedPick.width - 2 * Design.Spacing.s, height: Design.hairline)
                 .frame(height: SpeedPick.separator)
         }
         .padding(.top, SpeedPick.pad)

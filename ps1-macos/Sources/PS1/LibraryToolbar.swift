@@ -113,34 +113,9 @@ struct ContinueButton: View {
             .padding(Self.inset)
             .contentShape(.capsule)
         }
-        .buttonStyle(CapsulePressStyle())
+        .buttonStyle(FillPressStyle(Capsule()))
         .help("Resume \(group.title)")
         .accessibilityLabel("Resume \(group.title)")
-    }
-
-    /// Hover and press fills inside the capsule, as the glass has none of
-    /// its own for a plain button.
-    private struct CapsulePressStyle: ButtonStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            Fill(configuration: configuration)
-        }
-
-        private struct Fill: View {
-            let configuration: Configuration
-            @State private var hovering = false
-
-            var body: some View {
-                configuration.label
-                    .background {
-                        if configuration.isPressed {
-                            Capsule().fill(.fill.secondary)
-                        } else if hovering {
-                            Capsule().fill(.fill.tertiary)
-                        }
-                    }
-                    .onHover { hovering = $0 }
-            }
-        }
     }
 
     @ViewBuilder private var art: some View {

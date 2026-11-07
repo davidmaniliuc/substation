@@ -49,7 +49,7 @@ struct GameScreen: View {
 
                 // Under the bar so it reads on a bright frame: the bar's
                 // height and bottom padding, and a little more to fade out.
-                LinearGradient(colors: [Design.Dim.band, .clear], startPoint: .bottom, endPoint: .top)
+                LinearGradient(colors: [Design.Dim.scrim, .clear], startPoint: .bottom, endPoint: .top)
                     .frame(height: IconButton.height + 2 * SpeedPick.barPad + Design.Spacing.xxl + Design.Spacing.xl)
                     .ignoresSafeArea(edges: .bottom)
                     .opacity(chrome ? 1 : 0)

@@ -31,8 +31,11 @@ struct ResumePromptSheet: View {
     private static let column: CGFloat = 270
     private static let spacing = Design.Spacing.xl
     private static let padding = Design.Spacing.dialog
+    private static let coverSide: CGFloat = 40
     /// The hero and the list beside it are siblings in one card: one step.
-    private static let insetRadius = Design.Radius.panel
+    /// The card's padding is deeper than its corner, so no concentric step
+    /// exists; the smallest keeps them from competing with the card's.
+    private static let insetRadius = Design.Radius.thumbnail
     /// The column alone, wide enough for the footer's three buttons.
     private static let compactColumn: CGFloat = 360
     /// What the dialog leaves clear of the window's edges.
@@ -117,13 +120,13 @@ struct ResumePromptSheet: View {
                     Image(nsImage: coverImage).resizable().interpolation(.high)
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    Design.cardShape(Design.Radius.thumbnail).fill(.quaternary)
+                    Design.cardShape(Design.Radius.cover(Self.coverSide)).fill(.quaternary)
                         .overlay(Image(systemName: "opticaldisc").foregroundStyle(.secondary))
                 }
             }
-            .frame(width: 40, height: 40)
-            .clipShape(Design.cardShape(Design.Radius.thumbnail))
-            .overlay(Design.cardShape(Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: Design.hairline))
+            .frame(width: Self.coverSide, height: Self.coverSide)
+            .clipShape(Design.cardShape(Design.Radius.cover(Self.coverSide)))
+            .overlay(Design.cardShape(Design.Radius.cover(Self.coverSide)).strokeBorder(.separator, lineWidth: Design.hairline))
             .designShadow(.thumbnail)
             Marquee(text: offer.title, font: .title3.weight(.semibold))
         }
@@ -313,7 +316,7 @@ private struct HoverOutline: ButtonStyle {
                 .background(Capsule().fill(configuration.isPressed ? AnyShapeStyle(.fill.secondary)
                                            : hover && isEnabled ? AnyShapeStyle(.fill.tertiary)
                                            : AnyShapeStyle(.clear)))
-                .overlay(Capsule().strokeBorder(.separator, lineWidth: 1).opacity(active ? 1 : 0))
+                .overlay(Capsule().strokeBorder(.separator, lineWidth: Design.hairline).opacity(active ? 1 : 0))
                 .contentShape(Capsule())
                 .opacity(isEnabled ? 1 : Design.disabledOpacity)
                 .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }

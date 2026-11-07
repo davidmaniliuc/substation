@@ -78,8 +78,8 @@ private struct PauseMenuHeader: View {
                 Image(nsImage: cover).resizable().interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: coverSide, maxHeight: coverSide)
-                    .clipShape(Design.cardShape(Design.Radius.row))
-                    .overlay(Design.cardShape(Design.Radius.row).strokeBorder(.separator, lineWidth: Design.hairline))
+                    .clipShape(Design.cardShape(Design.Radius.cover(coverSide)))
+                    .overlay(Design.cardShape(Design.Radius.cover(coverSide)).strokeBorder(.separator, lineWidth: Design.hairline))
                     .designShadow(.thumbnail)
             }
             VStack(alignment: .leading, spacing: Design.Spacing.xxs) {
@@ -184,7 +184,7 @@ private struct PauseMenuList: View {
                     .font(.caption.weight(.semibold)).imageScale(.small).foregroundStyle(.secondary)
             }
         }
-        .buttonStyle(PressFillStyle())
+        .buttonStyle(FillPressStyle(hovers: false))
         .popover(isPresented: panelShown, arrowEdge: .trailing) { SaveStatesPanel(model: model, game: game) }
     }
 
@@ -246,8 +246,8 @@ private struct PauseMenuList: View {
                 RowIcon(name: model.isMuted ? "speaker.slash" : "speaker.wave.2")
                     .frame(width: RowMetrics.target, height: RowMetrics.target)
             }
-            .buttonStyle(PressFillStyle(cornerRadius: Design.concentric(
-                Design.Radius.row, inset: (RowMetrics.height - RowMetrics.target) / 2)))
+            .buttonStyle(FillPressStyle(cornerRadius: Design.concentric(
+                Design.Radius.row, inset: (RowMetrics.height - RowMetrics.target) / 2), hovers: false))
             // The target is wider than the icon column; the overhang keeps
             // the title where the other rows put theirs.
             .padding(.horizontal, -(RowMetrics.target - RowMetrics.icon) / 2)
@@ -305,7 +305,7 @@ private struct PauseMenuList: View {
                 Spacer(minLength: 0)
             }
         }
-        .buttonStyle(PressFillStyle())
+        .buttonStyle(FillPressStyle(hovers: false))
     }
 
     /// Read-only, so nothing here takes the highlight.
@@ -419,13 +419,3 @@ private struct Titled: View {
 
 /// A plain row's press feedback. The hover tint is the list's own highlight
 /// (the pointer moves it), so this adds only the firmer fill under a press.
-private struct PressFillStyle: ButtonStyle {
-    var cornerRadius = Design.Radius.row
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background {
-                if configuration.isPressed { Design.cardShape(cornerRadius).fill(.fill.secondary) }
-            }
-    }
-}
