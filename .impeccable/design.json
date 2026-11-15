@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T00:00:00Z",
+  "title": "Design System: Substation",
+  "extensions": {
+    "colorMeta": {
+      "system-accent": { "role": "primary", "displayName": "System Accent", "canonical": "NSColor.controlAccentColor (player's macOS accent; #007AFF shown)", "tonalRamp": ["#001a3d", "#002e6b", "#004499", "#005dcc", "#007aff", "#4d9fff", "#99c7ff", "#e0eeff"] },
+      "inset-fill-dark": { "role": "neutral", "displayName": "Inset Shade, dark", "canonical": "Color.black.opacity(0.28)", "tonalRamp": ["rgba(0,0,0,0.6)", "rgba(0,0,0,0.5)", "rgba(0,0,0,0.4)", "rgba(0,0,0,0.28)", "rgba(0,0,0,0.2)", "rgba(0,0,0,0.14)", "rgba(0,0,0,0.08)", "rgba(0,0,0,0.04)"] },
+      "inset-fill-light": { "role": "neutral", "displayName": "Inset Shade, light", "canonical": "Color.white.opacity(0.55)", "tonalRamp": ["rgba(255,255,255,0.1)", "rgba(255,255,255,0.2)", "rgba(255,255,255,0.3)", "rgba(255,255,255,0.45)", "rgba(255,255,255,0.55)", "rgba(255,255,255,0.7)", "rgba(255,255,255,0.85)", "rgba(255,255,255,0.95)"] },
+      "dialog-tint": { "role": "neutral", "displayName": "Window-Leaning Glass Tint", "canonical": "Color(nsColor: .windowBackgroundColor).opacity(0.3)", "tonalRamp": ["#141414", "#1e1e1e", "#2a2a2a", "#3a3a3a", "#8a8a8a", "#c8c8c8", "#e6e6e6", "#f5f5f5"] },
+      "placeholder-top": { "role": "neutral", "displayName": "Empty Case Gradient, top", "canonical": "Color(white: 0.20)", "tonalRamp": ["#0d0d0d", "#1f1f1f", "#333333", "#4d4d4d", "#666666", "#999999", "#cccccc", "#f2f2f2"] },
+      "placeholder-bottom": { "role": "neutral", "displayName": "Empty Case Gradient, bottom", "canonical": "Color(white: 0.12)", "tonalRamp": ["#0d0d0d", "#1f1f1f", "#333333", "#4d4d4d", "#666666", "#999999", "#cccccc", "#f2f2f2"] },
+      "game-black": { "role": "neutral", "displayName": "Game Black", "canonical": "#000000", "tonalRamp": ["#000000", "#0a0a0a", "#141414", "#1f1f1f", "#2e2e2e", "#404040", "#595959", "#737373"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "A game's title in the pause menu header and resume sheet." },
+      "title": { "displayName": "Title", "purpose": "macOS headline style: panel tab name, confirm card title, onboarding steps." },
+      "body": { "displayName": "Body", "purpose": "Pause menu rows, list rows, save state names." },
+      "callout": { "displayName": "Callout", "purpose": "Cover titles, confirm messages, counts, banners." },
+      "label": { "displayName": "Label", "purpose": "Section headers in secondary or tertiary label colour." },
+      "caption": { "displayName": "Caption", "purpose": "A cover's second line, key hints, timestamps." }
+    },
+    "shadows": [
+      { "name": "case-shadow", "value": "0 3px 12px rgba(0,0,0,0.35)", "purpose": "Every cover, on the art only (SwiftUI radius 6, y 3)." },
+      { "name": "thumbnail-shadow", "value": "0 2px 8px rgba(0,0,0,0.35)", "purpose": "The cover in the pause menu header (SwiftUI radius 4, y 2)." },
+      { "name": "card-lift", "value": "0 12px 60px rgba(0,0,0,0.3)", "purpose": "Modal cards (SwiftUI radius 30, y 12)." }
+    ],
+    "motion": [
+      { "name": "symbol-replace", "value": "snappy 0.25s", "purpose": "SF Symbol changes in the HUD." },
+      { "name": "hud-fade", "value": "easeInOut 0.25s", "purpose": "The HUD showing and hiding with the pointer." },
+      { "name": "speed-tab", "value": "snappy 0.22s", "purpose": "The speed tab rising out of the bar." },
+      { "name": "volume-pill", "value": "snappy 0.28s", "purpose": "The volume pill growing out of the speaker icon." },
+      { "name": "status-banner", "value": "easeOut 0.3s", "purpose": "The library's download status capsule." }
+    ],
+    "breakpoints": [
+      { "name": "pause-menu-compact", "value": "640px window height" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Game Tile",
+      "kind": "card",
+      "refersTo": "game-tile",
+      "description": "A square cover with a hairline and case shadow; selected, a 3px accent outline.",
+      "html": "<div class=\"ds-tile\" tabindex=\"0\"><div class=\"ds-tile-art\"></div><div class=\"ds-tile-title\">Crash Bandicoot</div><div class=\"ds-tile-sub\">Played yesterday</div></div>",
+      "css": ".ds-tile { width: 132px; font-family: -apple-system, system-ui, sans-serif; outline: none; } .ds-tile-art { aspect-ratio: 1; border-radius: 10px; background: linear-gradient(#333333, #1f1f1f); box-shadow: 0 3px 12px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08); } .ds-tile:focus-visible .ds-tile-art, .ds-tile:active .ds-tile-art { box-shadow: 0 3px 12px rgba(0,0,0,0.35), inset 0 0 0 3px #007aff; } .ds-tile-title { margin-top: 6px; font-size: 12px; font-weight: 500; padding: 0 2px; } .ds-tile-sub { font-size: 10px; opacity: 0.55; padding: 0 2px; }"
+    },
+    {
+      "name": "Library Panel",
+      "kind": "card",
+      "refersTo": "library-panel",
+      "description": "The inset fill content sinks into, edged by a hairline.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-head\"><strong>All Games</strong><span>24</span></div></div>",
+      "css": ".ds-panel { background: rgba(0,0,0,0.28); border-radius: 12px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); min-height: 120px; font-family: -apple-system, system-ui, sans-serif; } .ds-panel-head { display: flex; gap: 8px; align-items: baseline; padding: 10px 10px 10px 18px; font-size: 13px; } .ds-panel-head span { font-size: 12px; opacity: 0.35; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "HUD Icon Button",
+      "kind": "button",
+      "refersTo": "hud-icon-button",
+      "description": "An SF Symbol in a 32x30 seat; a dark circle while pressed.",
+      "html": "<button class=\"ds-hud-btn\" aria-label=\"Pause\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><rect x=\"3\" y=\"2\" width=\"3.5\" height=\"12\" rx=\"1\"/><rect x=\"9.5\" y=\"2\" width=\"3.5\" height=\"12\" rx=\"1\"/></svg></button>",
+      "css": ".ds-hud-btn { width: 32px; height: 30px; display: grid; place-items: center; border: 0; background: transparent; color: inherit; border-radius: 9999px; cursor: default; } .ds-hud-btn:active { background: radial-gradient(circle, rgba(0,0,0,0.35) 15px, transparent 15.5px); } .ds-hud-btn:focus-visible { outline: 2px solid #007aff; outline-offset: 1px; }"
+    },
+    {
+      "name": "HUD Bar",
+      "kind": "nav",
+      "refersTo": "hud-icon-button",
+      "description": "One glass capsule along the bottom of the game picture.",
+      "html": "<div class=\"ds-hud\"><span>▶</span><span>▤</span><span>◎</span><i></i><span>1×</span><span>⤢</span><span>🔈</span><span>☰</span></div>",
+      "css": ".ds-hud { display: inline-flex; gap: 6px; align-items: center; padding: 6px 16px; border-radius: 9999px; background: rgba(255,255,255,0.14); backdrop-filter: blur(20px) saturate(1.6); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22); color: #fff; font: 600 13px -apple-system, system-ui, sans-serif; } .ds-hud span { width: 32px; height: 30px; display: grid; place-items: center; } .ds-hud i { width: 1px; height: 22px; background: rgba(255,255,255,0.25); }"
+    },
+    {
+      "name": "Pause Menu Row",
+      "kind": "custom",
+      "refersTo": "pause-menu-row",
+      "description": "A 34px row highlighted by a soft tint, never a solid accent.",
+      "html": "<div class=\"ds-row\" tabindex=\"0\"><span class=\"ds-row-icon\">◐</span><span>Internal Resolution</span><span class=\"ds-row-val\">4×</span></div>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 8px; border-radius: 8px; font: 13px -apple-system, system-ui, sans-serif; outline: none; } .ds-row:hover, .ds-row:focus-visible { background: rgba(127,127,127,0.18); } .ds-row-icon { width: 18px; text-align: center; opacity: 0.6; } .ds-row-val { margin-left: auto; font-variant-numeric: tabular-nums; opacity: 0.6; }"
+    },
+    {
+      "name": "Modal Card",
+      "kind": "card",
+      "refersTo": "dialog-card",
+      "description": "Glass tinted toward the window background, 22px corners, card lift.",
+      "html": "<div class=\"ds-card\"><strong>Resume Crash Bandicoot?</strong><p>Pick up where you left off.</p><div class=\"ds-card-actions\"><button class=\"ds-btn\">Start Fresh</button><button class=\"ds-btn ds-btn-prominent\">Resume</button></div></div>",
+      "css": ".ds-card { width: 300px; padding: 20px; border-radius: 22px; background: rgba(30,30,30,0.55); backdrop-filter: blur(30px) saturate(1.6); box-shadow: 0 12px 60px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(255,255,255,0.15); color: #fff; font: 13px -apple-system, system-ui, sans-serif; text-align: center; } .ds-card strong { font-weight: 600; } .ds-card p { margin: 4px 0 14px; font-size: 12px; opacity: 0.6; } .ds-card-actions { display: flex; gap: 10px; justify-content: center; }"
+    },
+    {
+      "name": "Prominent Button",
+      "kind": "button",
+      "refersTo": "button-prominent",
+      "description": "The system's prominent glass button in the player's accent.",
+      "html": "<button class=\"ds-btn ds-btn-prominent\">Resume</button>",
+      "css": ".ds-btn { border: 0; border-radius: 9999px; padding: 6px 16px; font: 500 13px -apple-system, system-ui, sans-serif; background: rgba(255,255,255,0.14); color: inherit; } .ds-btn-prominent { background: #007aff; color: #fff; } .ds-btn:hover { filter: brightness(1.08); } .ds-btn:active { filter: brightness(0.9); } .ds-btn:focus-visible { outline: 3px solid rgba(0,122,255,0.6); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Console Behind Glass",
+    "overview": "The game is the picture. Everything Substation adds, the bar, the pause menu, the save states, the prompts, floats over that picture as glass or blur and gets out of the way. In the library the same idea holds: cover art is the only colour on screen, set into a quiet inset panel, and the chrome around it is the Mac's own.\n\nThe system is quiet, native and tactile. Quiet: the chrome is monochrome, and the accent marks only what a click will act on (the selection, the default button, a control's value), never decoration. Native: system fonts, system controls, system window colours under the System, Dark and Light themes, and behaviour copied from Apple's own apps (Music, Finder) rather than invented. Tactile: covers sit on the panel with a small shadow like physical cases, SF Symbols change with a symbol transition, and floating surfaces arrive on short snappy springs.\n\nConfirmed rejections: animated or gradient library backdrops, a pure-black library theme, and Liquid Glass on content.",
+    "keyCharacteristics": [
+      "Monochrome chrome; colour comes from cover art and the player's accent only.",
+      "Three depths: the window material, an inset fill for content, glass and shadow for anything floating.",
+      "One radius ladder (5 / 8 / 10 / 12 / 18 / 22) so nested shapes stay concentric.",
+      "SF Pro at macOS text-style sizes, secondary and tertiary label colours for hierarchy.",
+      "The game's picture is black under every theme."
+    ],
+    "rules": [
+      { "name": "The Covers Bring the Colour Rule", "body": "The chrome is monochrome. Cover art and the player's accent are the only colour on a library screen.", "section": "colors" },
+      { "name": "The Accent Means Click Rule", "body": "The accent appears only where a click acts: a selection, the default button, a control's value. Never as a fill for decoration or a section colour.", "section": "colors" },
+      { "name": "The Weight, Not Size Rule", "body": "Separate levels with weight and label colour first. A new screen does not introduce a size outside the macOS text styles.", "section": "typography" },
+      { "name": "The Digits Hold Still Rule", "body": "Any number that changes while visible (a count, a play clock, a speed, a scale) uses monospaced digits.", "section": "typography" },
+      { "name": "The Hints Are Never Buttons Rule", "body": "Nothing that must be clicked sits at a bottom edge; the key hints there only restate actions reachable elsewhere.", "section": "layout" },
+      { "name": "The No Glass on Content Rule", "body": "Liquid Glass belongs to controls and to cards floating over content: the HUD bar, the volume pill, the library's floating status capsule, dialogs. The library panel, lists and grids never take glass.", "section": "elevation" },
+      { "name": "The One Glass Pass Rule", "body": "The HUD bar is one glass shape, the speed tab drawn as part of its outline, because each glass effect is a pass over the 60 fps picture. The volume pill is the single deliberate second glass, and exists only while open.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reach for the stock SwiftUI control first; style a custom one only where the system has none, and make it look like it could be stock.",
+      "Do take corner radii from `Design.Radius` (5 / 8 / 10 / 12 / 18 / 22); never introduce a new one inline.",
+      "Do sink content into `InsetFill` with a separator hairline, and float overlays on glass or blur.",
+      "Do use the system label colours for hierarchy, and secondary rather than tertiary for small text on dark glass, to hold 4.5:1.",
+      "Do keep motion short and snappy (0.2-0.3s springs, ease-in-out fades); nothing bounces.",
+      "Do match Apple's own apps material for material when copying a control (Music's paging arrow is a flat grey pill, not glass)."
+    ],
+    "donts": [
+      "Don't put Liquid Glass on the library panel, a list or a grid.",
+      "Don't add gradient or animated backdrops, or a pure-black library theme; both were built and removed.",
+      "Don't hard-code a brand accent; the accent is the player's macOS accent until a brand tint is decided.",
+      "Don't scale a cover on hover or invent paging, hover or selection interactions Apple's apps do not use.",
+      "Don't fill a highlighted row with solid accent; use the soft tint."
+    ]
+  }
+}
