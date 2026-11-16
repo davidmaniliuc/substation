@@ -36,7 +36,7 @@ struct OnboardingView: View {
 
             VStack(spacing: 4) {
                 FolderRow(
-                    symbol: "cpu",
+                    symbol: "memorychip",
                     title: model.biosFolderURL == nil ? "Choose BIOS Folder…" : "Change BIOS Folder…",
                     hint: "The SCPH files dumped from your console",
                     folder: model.biosFolderURL,
@@ -181,7 +181,7 @@ private struct OnboardingPreview: View {
     var body: some View {
         if model.biosFolderURL == nil && model.gamesFolderURL == nil {
             ContentUnavailableView {
-                Label("Your Library", systemImage: "square.stack")
+                Label("Your Library", systemImage: "square.grid.2x2")
             } description: {
                 Text("The BIOS images and games in your folders appear here.")
             }
@@ -234,7 +234,7 @@ private struct OnboardingPreview: View {
                         }
                     }
                 } icon: {
-                    Image(systemName: "cpu")
+                    Image(systemName: "memorychip")
                 }
             }
         }

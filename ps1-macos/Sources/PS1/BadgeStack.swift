@@ -20,7 +20,7 @@ struct BadgeStack: View {
                     .accessibilityLabel("Running at \(model.effectiveSpeed) times speed")
             }
             if model.cpuOverclock(for: game) != 100 {
-                Badge(icon: "cpu", text: "CPU \(model.cpuOverclock(for: game))%", mono: true)
+                Badge(icon: "cpu.fill", text: "CPU \(model.cpuOverclock(for: game))%", mono: true)
                     .accessibilityLabel("Processor at \(model.cpuOverclock(for: game)) percent")
             }
             if game.isRewinding {

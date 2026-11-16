@@ -151,7 +151,7 @@ private struct PauseMenuList: View {
 
                     heading("Machine")
                     action(.reset, icon: "arrow.counterclockwise", title: "Reset")
-                    action(.quitGame, icon: "eject.fill", title: "Quit Game")
+                    action(.quitGame, icon: "power", title: "Quit Game")
 
                     heading("About This Game")
                     about
@@ -198,7 +198,7 @@ private struct PauseMenuList: View {
     /// click on a segment inserts at once.
     private var disc: some View {
         row(.disc) {
-            RowIcon(name: "opticaldisc")
+            RowIcon(name: "smallcircle.circle")
             Text("Disc").font(.system(size: 13))
             Spacer(minLength: 8)
             Picker("Disc", selection: Binding(

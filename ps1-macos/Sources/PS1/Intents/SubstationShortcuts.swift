@@ -12,7 +12,7 @@ struct SubstationShortcuts: AppShortcutsProvider {
             "Resume \(\.$game) in \(.applicationName)",
             "Resume \(.applicationName)",
             "Continue playing in \(.applicationName)",
-        ], shortTitle: "Resume Game", systemImageName: "arrow.clockwise")
+        ], shortTitle: "Resume Game", systemImageName: "clock.arrow.circlepath")
         AppShortcut(intent: OpenLibraryIntent(), phrases: [
             "Open the \(.applicationName) library",
             "Show my \(.applicationName) library",
