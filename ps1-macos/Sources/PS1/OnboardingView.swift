@@ -104,7 +104,7 @@ private struct FolderRow: View {
                     .font(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 38, height: 38)
-                    .background(.fill.tertiary, in: .rect(cornerRadius: 9))
+                    .background(.fill.tertiary, in: .rect(cornerRadius: Design.Radius.row))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
                     Group {
@@ -130,7 +130,7 @@ private struct FolderRow: View {
         .buttonStyle(RowButtonStyle())
         .overlay {
             if targeted {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(.tint, lineWidth: 2)
+                RoundedRectangle(cornerRadius: Design.Radius.row).strokeBorder(.tint, lineWidth: 2)
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -154,7 +154,7 @@ private struct FolderRow: View {
         case .empty:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(.yellow)
+                .symbolRenderingMode(.multicolor)
                 .accessibilityLabel("No BIOS images found")
         }
     }
@@ -168,7 +168,7 @@ private struct RowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(.fill.opacity(configuration.isPressed ? 1 : hovering ? 0.6 : 0),
-                        in: .rect(cornerRadius: 8))
+                        in: .rect(cornerRadius: Design.Radius.row))
             .onHover { hovering = $0 }
     }
 }

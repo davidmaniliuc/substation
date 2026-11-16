@@ -136,8 +136,8 @@ private struct KeyCapShape<Content: View>: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .frame(minWidth: 44)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
-            .contentShape(RoundedRectangle(cornerRadius: 5))
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: Design.Radius.thumbnail))
+            .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator))
+            .contentShape(RoundedRectangle(cornerRadius: Design.Radius.thumbnail))
     }
 }

@@ -70,7 +70,7 @@ private struct PauseMenuHeader: View {
         self.model = model
         self.game = game
         self.compact = compact
-        _cover = State(initialValue: game.currentCoverURL.flatMap { NSImage(contentsOf: $0) })
+        _cover = State(initialValue: game.currentCoverURL.flatMap(ImageCache.image(at:)))
     }
 
     var body: some View {
@@ -114,7 +114,7 @@ private struct PauseMenuHeader: View {
         .padding(.horizontal, 6)
         .padding(.bottom, compact ? 10 : 16)
         .task(id: game.currentCoverURL) {
-            cover = game.currentCoverURL.flatMap { NSImage(contentsOf: $0) }
+            cover = game.currentCoverURL.flatMap(ImageCache.image(at:))
         }
     }
 

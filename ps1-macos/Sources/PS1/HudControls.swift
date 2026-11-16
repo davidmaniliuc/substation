@@ -59,23 +59,6 @@ struct PressStyle: ButtonStyle {
     }
 }
 
-/// A soft capsule behind a control while the pointer is over it.
-struct HoverStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { HoverBody(configuration: configuration) }
-
-    private struct HoverBody: View {
-        let configuration: Configuration
-        @State private var hover = false
-
-        var body: some View {
-            configuration.label
-                .background(Capsule().fill(.white.opacity(configuration.isPressed ? 0.26 : hover ? 0.14 : 0)))
-                .onHover { hover = $0 }
-                .animation(.easeOut(duration: 0.12), value: hover)
-        }
-    }
-}
-
 /// One of the bar's buttons: 32×30, wide enough for its press disc. The
 /// speaker's seat is the same width so the pitch around it stays even.
 struct IconButton: View {
@@ -190,7 +173,16 @@ struct SpeedButton: View {
             .contentShape(.rect)
             .gesture(press)
             .help("Emulation Speed (hold Tab to fast-forward)")
-            .accessibilityLabel("Emulation speed \(model.speed) times")
+            .accessibilityElement()
+            .accessibilityLabel("Emulation Speed")
+            .accessibilityValue("\(model.speed) times")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: model.speed = min(model.speed + 1, SpeedSetting.choices.upperBound)
+                case .decrement: model.speed = max(model.speed - 1, SpeedSetting.choices.lowerBound)
+                @unknown default: break
+                }
+            }
             .overlay(alignment: .bottom) {
                 if open {
                     values.offset(y: -SpeedPick.seat).transition(.opacity)
@@ -214,7 +206,7 @@ struct SpeedButton: View {
                 Text("\(n)×")
                     .font(.system(size: 13, weight: model.speed == n ? .bold : .semibold).monospacedDigit())
                     .frame(width: SpeedPick.width, height: SpeedPick.slot)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(highlight(n))))
+                    .background(RoundedRectangle(cornerRadius: Design.Radius.tile).fill(.white.opacity(highlight(n))))
             }
             Rectangle().fill(.white.opacity(0.3)).frame(width: SpeedPick.width - 14, height: 1)
                 .frame(height: SpeedPick.separator)

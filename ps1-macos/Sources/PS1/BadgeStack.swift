@@ -53,11 +53,11 @@ struct Badge: View {
     var body: some View {
         Label(text, systemImage: icon)
             .symbolEffect(.pulse, isActive: pulse)
-            .font(.system(size: 13, weight: .semibold, design: mono ? .monospaced : .default))
+            .font(mono ? .system(size: 13, weight: .semibold).monospacedDigit() : .system(size: 13, weight: .semibold))
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .glassEffect(.regular, in: .capsule)
-            .transition(.move(edge: .trailing).combined(with: .opacity))
+            .motionTransition(.move(edge: .trailing).combined(with: .opacity))
             .allowsHitTesting(interactive)
     }
 }
@@ -76,7 +76,7 @@ private struct NoticeBadge: View {
             }
             .buttonStyle(.plain)
             .help("Show in Finder")
-            .transition(.move(edge: .trailing).combined(with: .opacity))
+            .motionTransition(.move(edge: .trailing).combined(with: .opacity))
         } else {
             Badge(icon: notice.icon, text: notice.text)
         }

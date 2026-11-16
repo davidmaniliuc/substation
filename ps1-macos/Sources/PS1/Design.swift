@@ -51,6 +51,23 @@ extension View {
     }
 }
 
+extension View {
+    /// A transition that moves or scales, replaced by a fade under Reduce
+    /// Motion. Every transition that is not a plain fade goes through here.
+    func motionTransition(_ transition: AnyTransition) -> some View {
+        modifier(MotionTransition(transition: transition))
+    }
+}
+
+private struct MotionTransition: ViewModifier {
+    let transition: AnyTransition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.transition(reduceMotion ? .opacity : transition)
+    }
+}
+
 extension Design {
     /// How far a modal card's glass leans toward the window background.
     static let dialogTint = Color(nsColor: .windowBackgroundColor).opacity(0.3)

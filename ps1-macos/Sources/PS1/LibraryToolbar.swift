@@ -97,7 +97,7 @@ struct ContinueButton: View {
                         .lineLimit(1)
                     if let lastPlayed {
                         Text("Played \(LibraryFormat.relative(lastPlayed))")
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -119,7 +119,7 @@ struct ContinueButton: View {
     }
 
     @ViewBuilder private var art: some View {
-        if let image = cover.flatMap(NSImage.init(contentsOf:)) {
+        if let image = cover.flatMap(ImageCache.image(at:)) {
             Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
         } else {
             ZStack {

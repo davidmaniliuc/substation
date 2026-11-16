@@ -13,8 +13,6 @@ struct GameScreen: View {
     /// bar's symbol replace run DURING the transition's resize lands its
     /// layer outside the bar, or drops it.
     @State private var settledFullScreen = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private var menuOpen: Bool { game.isOpen(.pauseMenu) }
 
     /// The coordinate space the hover and the speed tab's frame share.
@@ -61,13 +59,13 @@ struct GameScreen: View {
                     PauseMenu(model: model, game: game, isFullScreen: isFullScreen)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                         .ignoresSafeArea()
-                        .transition(reduceMotion ? .opacity : .move(edge: .leading))
+                        .motionTransition(.move(edge: .leading))
                 }
 
                 if game.showsPaused && !menuOpen && !game.isOpen(.saveStates)
                     && !model.isDialogShown {
                     PausedIndicator(model: model, game: game)
-                        .transition(.scale(scale: 1.25).combined(with: .opacity))
+                        .motionTransition(.scale(scale: 1.25).combined(with: .opacity))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 

@@ -95,7 +95,7 @@ struct ConfirmScrim<Card: View>: View {
         ZStack {
             Design.cardShape(cornerRadius).fill(.black.opacity(0.35))
                 .onTapGesture(perform: cancel)
-            card
+            card.accessibilityAddTraits(.isModal)
         }
         .transition(.opacity)
     }

@@ -23,8 +23,11 @@ struct ModalDialog<Content: View>: View {
 
             content
                 .dialogSurface()
+                // Not a sheet, so the trait a sheet carries is added by hand:
+                // VoiceOver stays in the card.
+                .accessibilityAddTraits(.isModal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .motionTransition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 }

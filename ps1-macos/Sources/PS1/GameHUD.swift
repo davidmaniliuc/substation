@@ -141,7 +141,7 @@ struct GameHUD: View {
         .contentShape(.capsule)
         .padding(.trailing, barInset + trailingWidth - pillRight)
         // Grows out of the icon rather than fading in over the bar.
-        .transition(.scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
+        .motionTransition(.scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
     }
 
     /// The space the speaker icon occupies in a capsule that does not draw

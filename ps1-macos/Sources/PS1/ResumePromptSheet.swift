@@ -88,10 +88,10 @@ struct ResumePromptSheet: View {
         .onAppear { selection = offer.states.first?.source }
         .task(id: offer.states.map(\.info.thumbnail)) {
             thumbnails = offer.states.reduce(into: [:]) { images, saved in
-                images[saved.source] = saved.info.thumbnail.flatMap(NSImage.init(contentsOf:))
+                images[saved.source] = saved.info.thumbnail.flatMap(ImageCache.image(at:))
             }
         }
-        .task(id: cover) { coverImage = cover.flatMap(NSImage.init(contentsOf:)) }
+        .task(id: cover) { coverImage = cover.flatMap(ImageCache.image(at:)) }
     }
 
     /// The selected state's picture, cross-fading as the selection moves.
@@ -135,7 +135,11 @@ struct ResumePromptSheet: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(saved.source.title).font(.system(size: 13))
                     if discMissing(saved.source) {
-                        Text("Disc missing").font(.system(size: 11)).foregroundStyle(.orange)
+                        // The symbol carries the warning: orange text this
+                        // small falls under 4.5:1 on the Light theme's fill.
+                        Label("Disc missing", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                     } else {
                         Text(StateSource.savedAt(saved.info.savedAt)).font(.system(size: 11))
                             .foregroundStyle(.secondary)

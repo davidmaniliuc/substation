@@ -37,8 +37,9 @@ struct GameTile: View {
     private static let highlightInset: CGFloat = 6
 
     var body: some View {
-        let image = coverURL.flatMap(NSImage.init(contentsOf:))
-        let cutOut = image.map(CoverShape.isCutOut) ?? false
+        let cover = coverURL.flatMap(ImageCache.cover(at:))
+        let image = cover?.image
+        let cutOut = cover?.isCutOut ?? false
         VStack(alignment: .leading, spacing: 6) {
             framed(art(image), cutOut: cutOut)
                 // The payload is the title, never the file URL: a file URL
@@ -85,8 +86,10 @@ struct GameTile: View {
         }
         .help(entry.title)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(entry.title)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityLabel(title)
+        .accessibilityValue(subtitle)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(.default, play)
     }
 
     /// A flat scan is clipped and outlined as a square. A cut-out (a 3D case)
@@ -141,7 +144,9 @@ struct GameTile: View {
 
             Image(systemName: "opticaldisc")
                 .font(.system(size: 34, weight: .thin))
-                .foregroundStyle(.tertiary)
+                // A fixed tone: the case is dark under the Light theme too,
+                // where the tertiary label is a faint black.
+                .foregroundStyle(.white.opacity(0.25))
         }
     }
 }

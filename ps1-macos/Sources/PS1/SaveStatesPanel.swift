@@ -126,7 +126,7 @@ private struct StateThumbnail: View {
 
     var body: some View {
         ZStack {
-            if let url, let image = NSImage(contentsOf: url) {
+            if let url, let image = ImageCache.image(at: url) {
                 Image(nsImage: image).resizable().interpolation(.high)
                     .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
                     // The hairline system thumbnails carry, so a dark frame keeps its edge.
