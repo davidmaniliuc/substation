@@ -183,7 +183,10 @@ public final class EmulatorViewModel {
     /// covers live on disk rather than in observable state, so nothing else
     /// would tell SwiftUI that a tile's picture changed.
     private(set) var coverRevision = 0 {
-        didSet { publishGamesToSystem() }
+        didSet {
+            ImageCache.coversChanged()
+            publishGamesToSystem()
+        }
     }
 
     private var input = InputMap()
@@ -987,7 +990,11 @@ public final class EmulatorViewModel {
         stage = .library
     }
 
+    /// Refused while a dialog is up, as `continuePlaying` is: the toolbar and
+    /// the menu bar sit outside the dialog's backdrop, and a second launch
+    /// would replace the offer the first is asking about.
     func play(_ entry: GameEntry) {
+        guard !isDialogShown else { return }
         launchFromOutside = false
         launchInGameWindow = false
         launch(entry.url)
@@ -998,6 +1005,7 @@ public final class EmulatorViewModel {
     /// no usable resume (only slots, or its resume disc gone) opens as a
     /// tile does, so the sheet can say why.
     func continuePlaying(_ group: GameGroup) {
+        guard !isDialogShown else { return }
         launchFromOutside = false
         launchInGameWindow = false
         resumeOrLaunch(group)

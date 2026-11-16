@@ -277,7 +277,7 @@ struct LibraryView: View {
                 .frame(maxWidth: 360)
 
             Button("Choose Games Folder…", action: chooseFolder)
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.borderedProminent)
         }
         .padding(36)
     }

@@ -9,6 +9,8 @@ enum ImageCache {
     private final class Entry {
         let image: NSImage
         let modified: Date?
+        /// The cover generation this entry was last checked against its file in.
+        var checked = -1
         lazy var isCutOut = CoverShape.isCutOut(image)
 
         init(image: NSImage, modified: Date?) {
@@ -26,10 +28,22 @@ enum ImageCache {
     static func image(at url: URL) -> NSImage? { entry(at: url)?.image }
 
     /// A cover, and whether it is a cut-out (`CoverShape`), which is read off
-    /// its pixels once.
+    /// its pixels once. The grid asks for every visible cover on every body
+    /// pass, so a cover already checked since the last `coversChanged` is
+    /// answered without touching its file.
     static func cover(at url: URL) -> (image: NSImage, isCutOut: Bool)? {
-        entry(at: url).map { ($0.image, $0.isCutOut) }
+        if let cached = cache.object(forKey: url as NSURL), cached.checked == coverGeneration {
+            return (cached.image, cached.isCutOut)
+        }
+        guard let entry = entry(at: url) else { return nil }
+        entry.checked = coverGeneration
+        return (entry.image, entry.isCutOut)
     }
+
+    private static var coverGeneration = 0
+
+    /// A cover was added, replaced or removed (`coverRevision`).
+    static func coversChanged() { coverGeneration += 1 }
 
     private static func entry(at url: URL) -> Entry? {
         // From the file system, not `resourceValues`: a URL caches those,

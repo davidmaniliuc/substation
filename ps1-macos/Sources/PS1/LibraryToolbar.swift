@@ -43,6 +43,8 @@ struct LibraryToolbar: ToolbarContent {
                 }
             }
             .pickerStyle(.segmented)
+            // A dialog over the grid does not cover the toolbar.
+            .disabled(model.isDialogShown)
         }
 
         ToolbarSpacer(.flexible)
@@ -54,6 +56,7 @@ struct LibraryToolbar: ToolbarContent {
                                lastPlayed: model.lastPlayedByGroup[group.id]) {
                     model.continuePlaying(group)
                 }
+                .disabled(model.isDialogShown)
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
         }
@@ -63,6 +66,7 @@ struct LibraryToolbar: ToolbarContent {
                 text: $model.librarySearch,
                 folds: LibrarySearchLayout.folds(width: width),
                 focusRequest: model.librarySearchFocusRequest)
+                .disabled(model.isDialogShown)
         }
     }
 }
@@ -106,9 +110,11 @@ struct ContinueButton: View {
                 .padding(.trailing, 2)
                 Image(systemName: "play.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
+                    // The system's selection pair, tuned to every accent:
+                    // white on a raw yellow accent cannot be read.
+                    .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
                     .frame(width: Self.side, height: Self.side)
-                    .background(.tint, in: .circle)
+                    .background(Color(nsColor: .selectedContentBackgroundColor), in: .circle)
             }
             .padding(Self.inset)
             .contentShape(.capsule)

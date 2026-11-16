@@ -80,22 +80,26 @@ private struct StateRow: View {
 
     @State private var hover = false
 
+    private static let selectedText = Color(nsColor: .alternateSelectedControlTextColor)
+
     var body: some View {
         HStack(spacing: 10) {
             StateThumbnail(url: info?.thumbnail).frame(width: 56, height: 42)
             VStack(alignment: .leading, spacing: 1) {
                 Text(source.title).font(.system(size: 13, weight: .medium))
                 Text(savedLine(source, info)).font(.system(size: 11))
-                    .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(selected ? AnyShapeStyle(Self.selectedText.opacity(0.8)) : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? .white : .primary)
+        .foregroundStyle(selected ? Self.selectedText : .primary)
         .padding(.horizontal, 6).padding(.vertical, 4)
-        // A list's selection: the accent fill. Hover only brightens.
+        // A list's selection, in the system's own pair of colours: it tunes
+        // them to every accent, where white on the raw accent is unreadable
+        // on a yellow one. Hover only brightens.
         .background(RoundedRectangle(cornerRadius: Design.Radius.row)
-            .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.85))
-                  : AnyShapeStyle(.primary.opacity(hover && enabled ? 0.06 : 0))))
+            .fill(selected ? AnyShapeStyle(Color(nsColor: .selectedContentBackgroundColor))
+                  : AnyShapeStyle(SoftFill(hover && enabled ? 0.06 : 0))))
         .padding(.horizontal, 10)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: activate)

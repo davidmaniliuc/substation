@@ -12,6 +12,7 @@ struct TitleStrip: View {
     /// Where the traffic lights sit, measured: both windows carry a unified
     /// toolbar, which centres them in a 52 pt band.
     @State private var lights: CGRect?
+    @Environment(\.colorSchemeContrast) private var contrast
 
     static let fullScreenLeading: CGFloat = 20
     static let fullScreenTop: CGFloat = 9
@@ -29,7 +30,7 @@ struct TitleStrip: View {
                     .lineLimit(1)
                 Text(status(at: context.date))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.white.opacity(contrast == .increased ? 1 : 0.7))
             }
         }
         .foregroundStyle(.white)

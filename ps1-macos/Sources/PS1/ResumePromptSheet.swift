@@ -305,8 +305,8 @@ private struct HoverOutline: ButtonStyle {
             configuration.label
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(.primary.opacity(configuration.isPressed ? 0.14 : hover ? 0.06 : 0)))
-                .overlay(Capsule().strokeBorder(.primary.opacity(hover || configuration.isPressed ? 0.22 : 0),
+                .background(Capsule().fill(SoftFill(configuration.isPressed ? 0.14 : hover ? 0.06 : 0)))
+                .overlay(Capsule().strokeBorder(SoftFill(hover || configuration.isPressed ? 0.22 : 0),
                                                 lineWidth: 1))
                 .contentShape(Capsule())
                 .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }

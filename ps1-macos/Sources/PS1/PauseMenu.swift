@@ -248,6 +248,7 @@ private struct PauseMenuList: View {
             }
             .buttonStyle(.plain)
             .help(model.isMuted ? "Unmute" : "Mute")
+            .accessibilityLabel(model.isMuted ? "Unmute" : "Mute")
             Text("Volume").font(.system(size: 13))
             Spacer(minLength: 8)
             // The level in words too: the small slider's knob covers the
@@ -349,8 +350,7 @@ private struct PauseMenuList: View {
         return HStack(spacing: RowMetrics.gap) { content() }
             .padding(.horizontal, 8)
             .frame(minHeight: RowMetrics.height)
-            .background(highlighted ? Color.primary.opacity(0.09) : .clear,
-                        in: .rect(cornerRadius: Design.Radius.row))
+            .background(SoftFill(highlighted ? 0.09 : 0), in: .rect(cornerRadius: Design.Radius.row))
             .contentShape(.rect)
             .id(item)
             .onHover { inside in

@@ -48,7 +48,7 @@ struct OnboardingView: View {
                     title: model.gamesFolderURL == nil ? "Choose Games Folder…" : "Change Games Folder…",
                     hint: "Disc images in .cue, .chd, .ccd, .mds, .pbp, .ecm, .iso, .img or .bin, in any subfolder",
                     folder: model.gamesFolderURL,
-                    status: model.library.isScanning ? .scanning : .found,
+                    status: gamesStatus,
                     choose: model.chooseGamesFolder,
                     drop: model.setGamesFolder)
             }
@@ -65,7 +65,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Open Library") { model.finishOnboarding() }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!model.onboardingReady)
@@ -78,7 +78,12 @@ struct OnboardingView: View {
 
     private var biosStatus: FolderRow.Status {
         if model.isSurveyingBios { return .scanning }
-        return model.biosFound.isEmpty ? .empty : .found
+        return model.biosFound.isEmpty ? .empty("No BIOS images found") : .found
+    }
+
+    private var gamesStatus: FolderRow.Status {
+        if model.library.isScanning { return .scanning }
+        return model.groups.isEmpty ? .empty("No games found") : .found
     }
 }
 
@@ -86,7 +91,8 @@ struct OnboardingView: View {
 /// folder or what belongs there. A folder dragged from Finder onto the row
 /// counts as choosing it.
 private struct FolderRow: View {
-    enum Status { case scanning, found, empty }
+    /// `empty` carries what VoiceOver says of the warning.
+    enum Status { case scanning, found, empty(String) }
 
     let symbol: String
     let title: String
@@ -151,11 +157,11 @@ private struct FolderRow: View {
                 .font(.title3)
                 .foregroundStyle(.green)
                 .accessibilityLabel("Ready")
-        case .empty:
+        case .empty(let label):
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
                 .symbolRenderingMode(.multicolor)
-                .accessibilityLabel("No BIOS images found")
+                .accessibilityLabel(label)
         }
     }
 }

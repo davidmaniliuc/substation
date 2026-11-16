@@ -274,7 +274,9 @@ own silhouette and never clipped or outlined as a square.
   tint (9%), never a solid accent fill, because most rows carry a control. Pointer,
   arrows and controller move the same highlight.
 - **Save state row:** a 56 by 42px thumbnail, a medium-weight name and a caption
-  line; the selected slot fills with the accent at 85%.
+  line; the selected slot takes the system's selection colours
+  (`selectedContentBackgroundColor` under `alternateSelectedControlTextColor`),
+  which stay readable under every accent.
 
 ### Game Tile (signature)
 A square cover with 10px corners, a 1px hairline at primary 8%, the case shadow,

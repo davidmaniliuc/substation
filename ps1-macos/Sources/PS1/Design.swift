@@ -101,10 +101,26 @@ struct BehindWindowBlur: NSViewRepresentable {
 
 /// The inset fill under content set into a surface: the library's panel, the
 /// resume sheet's list and its button strip. A shade darker than the material
-/// in Dark, a shade lighter in Light, so it reads as inset in either.
+/// in Dark, a shade lighter in Light, so it reads as inset in either, and a
+/// firmer step under Increase Contrast.
 struct InsetFill: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
-        environment.colorScheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.55)
+        let firm = environment.colorSchemeContrast == .increased
+        return environment.colorScheme == .dark ? Color.black.opacity(firm ? 0.5 : 0.28)
+                                                : Color.white.opacity(firm ? 0.85 : 0.55)
+    }
+}
+
+/// A faint wash of the label colour: a hover, a row's highlight, a hairline
+/// round a cover. Under Increase Contrast it is drawn firmly enough to see.
+struct SoftFill: ShapeStyle {
+    let opacity: Double
+
+    init(_ opacity: Double) { self.opacity = opacity }
+
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        let firm = environment.colorSchemeContrast == .increased
+        return Color.primary.opacity(firm ? min(opacity * 3, 1) : opacity)
     }
 }
 

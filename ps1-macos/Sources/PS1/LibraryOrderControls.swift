@@ -69,6 +69,6 @@ struct LibraryOrderPill: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .frame(height: 24)
-        .background(.primary.opacity(0.07), in: .capsule)
+        .background(SoftFill(0.07), in: .capsule)
     }
 }
