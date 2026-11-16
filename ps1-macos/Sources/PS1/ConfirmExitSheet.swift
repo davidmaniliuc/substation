@@ -8,15 +8,14 @@ struct ConfirmExitSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Confirm Exit").font(.headline)
-            Text(intent.question)
-            Toggle("Save State For Resume", isOn: $saveState)
+            Text(intent.question).font(.headline)
+            Toggle("Save state for resume", isOn: $saveState)
                 .toggleStyle(.checkbox)
             HStack(spacing: 12) {
-                Button(action: cancel) { Text("No").frame(maxWidth: .infinity) }
+                Button(action: cancel) { Text("Cancel").frame(maxWidth: .infinity) }
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(.bordered)
-                Button(action: confirm) { Text("Yes").frame(maxWidth: .infinity) }
+                Button(action: confirm) { Text("Quit").frame(maxWidth: .infinity) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

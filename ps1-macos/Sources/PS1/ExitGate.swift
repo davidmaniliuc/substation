@@ -12,8 +12,8 @@ enum ExitIntent: Equatable {
 
     var question: String {
         switch self {
-        case .quit, .closeWindow: "Are you sure you want to exit the application?"
-        case .eject, .open, .resume: "Are you sure you want to exit the game?"
+        case .quit, .closeWindow: "Quit Substation?"
+        case .eject, .open, .resume: "Quit Game?"
         }
     }
 }
