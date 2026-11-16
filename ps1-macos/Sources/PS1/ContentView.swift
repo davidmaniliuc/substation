@@ -34,6 +34,7 @@ public struct ContentView: View {
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,
                     tileSize: CGFloat(model.libraryTileSize),
+                    selection: $model.librarySelection,
                     gridWidth: $model.libraryGridWidth,
                     gridHeight: $model.libraryGridHeight)
             } else {

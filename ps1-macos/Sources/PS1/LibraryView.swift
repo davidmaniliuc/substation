@@ -51,8 +51,9 @@ struct LibraryView: View {
     private static let panelRadius = Design.Radius.panel
 
     /// The selected tile, by group id, so a rescan that keeps the game keeps
-    /// the selection.
-    @State private var selection: GameGroup.ID?
+    /// the selection. From `EmulatorViewModel.librarySelection`: the Library
+    /// menu acts on it.
+    @Binding var selection: GameGroup.ID?
     /// The grid's laid-out width, from `EmulatorViewModel.libraryGridWidth`;
     /// the column count is derived from it and the tile size, so either
     /// changing re-derives it, and Bigger/Smaller Covers step from it.

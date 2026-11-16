@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Library menu.
@@ -15,6 +16,25 @@ struct LibraryCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Library") {
+            // The cover's own menu (`GameContextMenu`), for the selected
+            // cover: a context menu's items are in the menu bar too. Dimmed
+            // here where the context menu leaves an item out.
+            let selected = model.selectedGame
+            Button("Play") { selected.map(model.play) }
+                .disabled(selected == nil)
+            Button("Show in Finder") {
+                if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected.url]) }
+            }
+            .disabled(selected == nil)
+            Button("Choose Cover Image…") { selected.map(model.chooseCover(for:)) }
+                .disabled(selected == nil)
+            Button("Download Cover") { selected.map(model.downloadCover(for:)) }
+                .disabled(selected?.serial == nil)
+            Button("Remove Custom Cover") { selected.map(model.removeCover(for:)) }
+                .disabled(selected.flatMap(model.coverURL(for:)) == nil)
+
+            Divider()
+
             Button("Find…") { model.librarySearchFocusRequest += 1 }
                 .keyboardShortcut("f")
                 .disabled(!model.libraryVisible)

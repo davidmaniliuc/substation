@@ -367,6 +367,16 @@ public final class EmulatorViewModel {
 
     /// The toolbar search, for the session only, as the tab is.
     var librarySearch = ""
+
+    /// The grid's selected cover, for the session only.
+    var librarySelection: GameGroup.ID?
+
+    /// The game the Library menu's items act on: the selected cover's first
+    /// disc, while the library shows it.
+    var selectedGame: GameEntry? {
+        guard libraryVisible, let librarySelection else { return nil }
+        return visibleGroups.first { $0.id == librarySelection }?.first
+    }
     /// Bumped by Library ▸ Find (⌘F); the toolbar's field takes focus on
     /// each change. A counter rather than a flag, so a second ⌘F after the
     /// field lost focus is still a change.
