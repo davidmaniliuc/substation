@@ -73,33 +73,64 @@ export fn loadBios(ptr: [*]const u8, len: usize) i32 {
 /// `.sub` in `sbi`. A cue with several FILEs needs its images concatenated
 /// with a `REM FILESIZE` line before each, which is how the seams survive
 /// the concatenation. An eboot takes no cue, and `disc` picks which of its
-/// discs to open; every other format wants 0.
+/// discs to open; every other format wants 0. A running executable is
+/// dropped for the disc.
 export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize, disc: u32) i32 {
-    const cue_text: []const u8 = if (cue_len > 0) (cue orelse return codes.bad_cue)[0..cue_len] else &.{};
-    const side: []const u8 = if (sbi_len > 0) (sbi orelse return codes.bad_sbi)[0..sbi_len] else &.{};
-    const data = bin[0..bin_len];
-    const opened = DiscImage.open(machine.allocator, data, cue_text, side, disc) catch |err| return codes.ofOpen(err);
+    const p = switch (prepareDisc(bin[0..bin_len], cue, cue_len, sbi, sbi_len, ppf, ppf_len, disc)) {
+        .err => |code| return code,
+        .ok => |p| p,
+    };
+    machine.replaceDisc(p.disc, bin[0..bin_len], p.decoder, p.sbi, p.patch);
+    return codes.ok;
+}
+
+/// `loadDisc` through the tray, for the next disc of a running game: the
+/// shell opens and closes an emulated second later, which is how the game
+/// learns to re-read the TOC. Same inputs, ownership and codes; a machine
+/// running an executable has no tray to open and answers `busy`.
+export fn swapDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize, disc: u32) i32 {
+    if (machine.exe != null) return codes.busy;
+    const p = switch (prepareDisc(bin[0..bin_len], cue, cue_len, sbi, sbi_len, ppf, ppf_len, disc)) {
+        .err => |code| return code,
+        .ok => |p| p,
+    };
+    machine.swapDisc(p.disc, bin[0..bin_len], p.decoder, p.sbi, p.patch);
+    return codes.ok;
+}
+
+const Prepared = struct {
+    disc: ps1.disc.Disc,
+    decoder: DiscImage.Decoder,
+    sbi: []u8,
+    patch: ps1.ppf.Overlay,
+};
+
+/// Opens the image and builds its patch, touching nothing installed: every
+/// refusal frees what it opened on the way.
+fn prepareDisc(data: []const u8, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize, disc: u32) union(enum) { ok: Prepared, err: i32 } {
+    const cue_text: []const u8 = if (cue_len > 0) (cue orelse return .{ .err = codes.bad_cue })[0..cue_len] else &.{};
+    const side: []const u8 = if (sbi_len > 0) (sbi orelse return .{ .err = codes.bad_sbi })[0..sbi_len] else &.{};
+    const opened = DiscImage.open(machine.allocator, data, cue_text, side, disc) catch |err| return .{ .err = codes.ofOpen(err) };
     var d = opened.disc;
 
     const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
         const bytes = (ppf orelse {
             closeOpened(opened);
-            return codes.bad_ppf;
+            return .{ .err = codes.bad_ppf };
         })[0..ppf_len];
         break :blk ps1.ppf.build(machine.allocator, d, bytes) catch |err| {
             closeOpened(opened);
-            return switch (err) {
+            return .{ .err = switch (err) {
                 error.OutOfMemory => codes.oom,
                 error.PpfBadFormat => codes.bad_ppf,
                 error.PpfMismatch => codes.ppf_mismatch,
-            };
+            } };
         };
     } else .{};
 
     d.setSbi(opened.sbi);
     d.patch = patch;
-    machine.replaceDisc(d, data, opened.decoder, opened.sbi, patch);
-    return codes.ok;
+    return .{ .ok = .{ .disc = d, .decoder = opened.decoder, .sbi = opened.sbi, .patch = patch } };
 }
 
 fn closeOpened(opened: DiscImage.Opened) void {
@@ -149,5 +180,73 @@ export fn identifyDisc(bin: [*]const u8, bin_len: usize, sheet: ?[*]const u8, sh
         .imageTitle = clipTitle(image.title),
         .set = if (ps1.discdb.lookup(serial)) |e| DiscSet{ .title = e.game_title, .disc = e.disc_number } else null,
         .discs = image.discs,
+    });
+}
+
+fn exeCode(err: ps1.exe.Error) i32 {
+    return if (err == error.OutOfMemory) codes.oom else codes.bad_exe;
+}
+
+/// Boots an executable in place of a disc: a PS-X EXE, a CPE or an ELF, told
+/// apart by content. `libps` is a `libps.exe` placed in RAM first (a PS-X
+/// EXE only), or empty. Both are COPIED, so the caller frees them. Any disc
+/// is taken out and the machine cold-boots the BIOS, which hands over to the
+/// program once the kernel is up; `reset` and `loadState` re-arm it and
+/// `loadDisc` drops it. A file it cannot boot is `bad_exe` and changes nothing.
+export fn loadExe(exe: [*]const u8, exe_len: usize, libps: ?[*]const u8, libps_len: usize) i32 {
+    const lib_in: []const u8 = if (libps_len > 0) (libps orelse return codes.bad_exe)[0..libps_len] else &.{};
+    var program = parseExe(exe[0..exe_len], lib_in) catch |err| return exeCode(err);
+    machine.bootExe(program) catch {
+        program.deinit();
+        return codes.oom;
+    };
+    return codes.ok;
+}
+
+fn parseExe(exe: []const u8, libps: []const u8) ps1.exe.Error!machine.Exe {
+    const a = machine.allocator;
+    const bytes = try a.dupe(u8, exe);
+    errdefer a.free(bytes);
+    const lib_bytes = try a.dupe(u8, libps);
+    errdefer a.free(lib_bytes);
+    var main = try ps1.exe.parse(a, bytes);
+    errdefer main.deinit(a);
+    var lib: ?ps1.exe.Program = null;
+    if (lib_bytes.len > 0) {
+        var p = try ps1.exe.parse(a, lib_bytes);
+        // Loaded for its code and data alone; only a PS-X EXE is one.
+        if (p.format != .psexe) {
+            p.deinit(a);
+            return error.BadFormat;
+        }
+        lib = p;
+    }
+    return .{
+        .bytes = bytes,
+        .libps = lib_bytes,
+        .boot = .{ .main = main, .libps = lib, .fingerprint = ps1.exe.fingerprint(bytes, lib_bytes) },
+    };
+}
+
+const ExeInfo = struct {
+    format: []const u8,
+    region: ?[]const u8,
+    /// `exe.fingerprint` of the file alone, as 16 hex digits: a u64 does not
+    /// survive a JavaScript number.
+    fingerprint: []const u8,
+};
+
+/// Whether `exe` is an executable `loadExe` would boot, with no machine: a
+/// Windows `.exe` is `bad_exe`. The caller frees `exe`.
+export fn identifyExe(exe: [*]const u8, exe_len: usize) i32 {
+    const bytes = exe[0..exe_len];
+    var p = ps1.exe.parse(machine.allocator, bytes) catch |err| return exeCode(err);
+    defer p.deinit(machine.allocator);
+    var hex: [16]u8 = undefined;
+    _ = std.fmt.bufPrint(&hex, "{x:0>16}", .{ps1.exe.fingerprint(bytes, "")}) catch unreachable;
+    return writeResult(ExeInfo{
+        .format = @tagName(p.format),
+        .region = if (p.region) |r| @tagName(r) else null,
+        .fingerprint = &hex,
     });
 }

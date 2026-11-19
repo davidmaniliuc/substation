@@ -29,10 +29,15 @@ function frame() {
 | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | `loadBios(bytes)`                        | Installs a BIOS and returns `{ known, region, version, description }`        |
 | `loadDisc({ bin, cue?, sbi?, ppf?, disc? })` | Inserts a disc; a CHD or eboot is recognised by content and takes no cue; `disc` picks an eboot disc (a `.ppf` patches disc 0 only) |
+| `swapDisc({ bin, cue?, sbi?, ppf?, disc? })` | The next disc of a running game, through the tray (the game sees it open and close) |
+| `loadExe(exe, libps?)`                   | Boots a PS-X EXE, CPE or ELF in place of a disc; `libps` is a `libps.exe` found beside it |
+| `identifyExe(bytes)`                     | `{ format, region, fingerprint }`, or `BAD_EXE` for anything it cannot boot |
 | `identifyDisc(bin, { sheet?, disc? })`   | Region, serial, volume id, catalogued title, `discs` and an eboot's `imageTitle`, with no BIOS |
 | `runFrame()` / `frame()`                 | Runs to the next vblank / the displayed picture as RGBA                      |
 | `readAudio(max?)`                        | Drains the sound output (a copy, transferable)                               |
 | `setButtons(mask)`                       | Pad 1. A 0 bit is PRESSED; `0xFFFF` is idle                                   |
+| `setAnalog(lx, ly, rx, ry)`              | The sticks: 0..255, `0x80` centred, Y grows down                             |
+| `pressAnalogButton()` / `padStatus()`    | The ANALOG button / `{ analog, smallMotor, largeMotor }` for the LED and rumble |
 | `loadMemcard(slot, bytes)`               | Installs a 128 KB card image in slot 0 or 1                                  |
 | `takeMemcard(slot)`                      | The card's image if the game wrote it since the last call, else `null`       |
 | `saveState()` / `loadState(bytes)`       | The whole machine; a refused state leaves the running machine untouched      |
@@ -82,7 +87,8 @@ JavaScript as a `WebAssembly.RuntimeError`; the machine is unusable after it.
 The disc is copied into wasm memory, so a 700 MB `.bin` needs 700 MB there;
 a `.chd` of the same disc is a third to a half of that. The browser runs the
 cached interpreter at best: full speed depends on the game and the machine.
-One disc per core; no disc swap. The module uses WebAssembly SIMD
+One disc per core at a time: `swapDisc` replaces it, and a machine running
+an executable answers `BUSY` to a swap (`loadDisc` replaces the program). The module uses WebAssembly SIMD
 (`simd128`), so an engine without it refuses to compile `ps1.wasm`.
 
 ## Build

@@ -25,7 +25,8 @@ pub const no_history: i32 = -17;
 pub const bad_ppf: i32 = -18;
 pub const ppf_mismatch: i32 = -19;
 pub const state_patch: i32 = -20;
-// -21 to -26 are the session's, which the browser does not have.
+// -21 to -23 and -25 to -26 are the session's, which the browser does not have.
+pub const busy: i32 = -24;
 pub const bad_exe: i32 = -27;
 pub const bad_ecm: i32 = -28;
 pub const bad_ccd: i32 = -29;

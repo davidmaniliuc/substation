@@ -2,7 +2,7 @@ import { compile, Ps1Core, type DiscInfo } from './core';
 import { toBytes, type Binary } from './protocol';
 
 export { Ps1Core, compile, BIOS_BYTES, MEMCARD_BYTES, AUDIO_SAMPLE_RATE } from './core';
-export type { BiosInfo, CpuEngine, DiscBytes, DiscInfo, Frame, Region, WasmSource } from './core';
+export type { BiosInfo, CpuEngine, DiscBytes, DiscInfo, ExeInfo, Frame, PadStatus, Region, WasmSource } from './core';
 export { Ps1Error, type Ps1ErrorCode } from './errors';
 export { discFromFiles, layOut } from './disc-files';
 export { toBytes, type Binary, type DiscInput } from './protocol';

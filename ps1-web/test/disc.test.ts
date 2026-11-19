@@ -89,6 +89,15 @@ describe('loadDisc', () => {
   });
 });
 
+describe('swapDisc', () => {
+  test('a running game takes the next disc, and a refused one leaves the old disc in', async () => {
+    const core = await newCore();
+    core.loadDisc({ bin: syntheticDisc() });
+    expect(codeOf(() => core.swapDisc({ bin: new Uint8Array(100) }))).toBe('BAD_CUE');
+    expect(() => core.swapDisc({ bin: syntheticDisc() })).not.toThrow();
+  });
+});
+
 describe('a binary sheet', () => {
   test('a Uint8Array cue reaches wasm byte for byte', async () => {
     const core = await newCore(false);

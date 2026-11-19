@@ -44,6 +44,17 @@ describe('machine', () => {
   });
 });
 
+describe('pad', () => {
+  test('a fresh pad is digital and still, and takes sticks and the analog button', async () => {
+    const core = await newCore();
+    expect(core.padStatus()).toEqual({ analog: false, smallMotor: 0, largeMotor: 0 });
+    expect(() => {
+      core.setAnalog(0x80, 0x80, 0xff, 0x00);
+      core.pressAnalogButton();
+    }).not.toThrow();
+  });
+});
+
 describe('eboot', () => {
   test("identifyDisc reports an eboot's disc count and title", async () => {
     const core = await newCore(false);

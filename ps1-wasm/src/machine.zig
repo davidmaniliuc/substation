@@ -31,10 +31,27 @@ var sbi: []u8 = &.{};
 /// Owned overlay of the disc's `.ppf`, which `disc.patch` is.
 var patch: ps1.ppf.Overlay = .{};
 var decoder: ps1.disc_image.Decoder = .none;
+/// The executable booted in place of a disc (`loadExe`), owned. Every `Bus`
+/// `build` makes borrows its `boot`, so a reset or a state load re-arms it.
+pub var exe: ?Exe = null;
 
 pub var memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 = @splat(@splat(0));
 
 const Machine = struct { bus: *Bus, cpu: Cpu };
+
+/// A program and its `libps`, copied: the parsed segments slice the copies.
+pub const Exe = struct {
+    bytes: []u8,
+    libps: []u8,
+    boot: ps1.exe_boot.Boot,
+
+    pub fn deinit(self: *Exe) void {
+        self.boot.main.deinit(allocator);
+        if (self.boot.libps) |*p| p.deinit(allocator);
+        allocator.free(self.bytes);
+        allocator.free(self.libps);
+    }
+};
 
 /// A machine on a fresh `Bus`, carrying the host's BIOS, disc, cards and
 /// engine. The engine goes on BEFORE any state load: the load restores the
@@ -42,6 +59,7 @@ const Machine = struct { bus: *Bus, cpu: Cpu };
 fn build() error{OutOfMemory}!Machine {
     const b = try Bus.init(allocator);
     if (disc) |d| b.cdrom.setDisc(d);
+    b.exe_boot = if (exe) |*e| &e.boot else null;
     installBios(b);
     for (0..Sio.memcard_slots) |i| b.sio.setMemoryCardData(i, &memcard[i]);
     var c = Cpu.init(b);
@@ -113,18 +131,62 @@ fn isPlayStationDisc() bool {
 }
 
 /// Installs a disc whose bytes this module now owns, and releases the last
-/// one's. `d` already carries `new_sbi` and `new_patch`: the drive copies the
-/// `Disc` by value.
+/// one's, along with any executable it ran instead. `d` already carries
+/// `new_sbi` and `new_patch`: the drive copies the `Disc` by value.
 pub fn replaceDisc(d: Disc, bytes: []u8, new_decoder: ps1.disc_image.Decoder, new_sbi: []u8, new_patch: ps1.ppf.Overlay) void {
+    if (exe) |*e| e.deinit();
+    exe = null;
+    bus.exe_boot = null;
     bus.cdrom.setDisc(d);
-    decoder.close();
-    allocator.free(disc_bytes);
-    allocator.free(sbi);
-    patch.deinit(allocator);
-    patch = new_patch;
+    keepDisc(d, bytes, new_decoder, new_sbi, new_patch);
+    installBios(bus);
+}
+
+/// `replaceDisc` through the tray: the shell opens, the disc goes in and it
+/// closes an emulated second later, leaving the status bit that tells the
+/// game to re-read the TOC. The caller has checked no executable runs.
+pub fn swapDisc(d: Disc, bytes: []u8, new_decoder: ps1.disc_image.Decoder, new_sbi: []u8, new_patch: ps1.ppf.Overlay) void {
+    bus.cdrom.swapDisc(d, ps1.cdrom.shell_open_cycles);
+    keepDisc(d, bytes, new_decoder, new_sbi, new_patch);
+}
+
+/// Boots `program` in place of a disc: a cold machine with no disc, which
+/// jumps into it once the kernel is initialised. A refusal leaves the
+/// running machine, its disc and its program as they were.
+pub fn bootExe(program: Exe) error{OutOfMemory}!void {
+    var old_exe = exe;
+    const old_disc = disc;
+    exe = program;
+    disc = null;
+    const dirty = snapshotCards();
+    const m = build() catch |err| {
+        exe = old_exe;
+        disc = old_disc;
+        return err;
+    };
+    adopt(m, dirty);
+    if (old_exe) |*e| e.deinit();
+    releaseDisc();
+    disc_bytes = &.{};
+    sbi = &.{};
+    patch = .{};
+    decoder = .none;
+}
+
+fn keepDisc(d: Disc, bytes: []u8, new_decoder: ps1.disc_image.Decoder, new_sbi: []u8, new_patch: ps1.ppf.Overlay) void {
+    releaseDisc();
     disc = d;
     disc_bytes = bytes;
     decoder = new_decoder;
     sbi = new_sbi;
-    installBios(bus);
+    patch = new_patch;
+}
+
+/// Frees what the disc in the drive reads from. The drive must already hold
+/// another disc, or none.
+fn releaseDisc() void {
+    decoder.close();
+    allocator.free(disc_bytes);
+    allocator.free(sbi);
+    patch.deinit(allocator);
 }

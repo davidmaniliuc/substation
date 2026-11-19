@@ -42,6 +42,26 @@ export fn setButtons(mask: u32) void {
     machine.bus.sio.setButtons(@truncate(mask));
 }
 
+/// The sticks, as the pad reports them: 0x80 centre, Y grows DOWN. Applied
+/// to the next packet the game reads.
+export fn setAnalog(lx: u32, ly: u32, rx: u32, ry: u32) void {
+    machine.bus.sio.pad.setSticks(@truncate(lx), @truncate(ly), @truncate(rx), @truncate(ry));
+}
+
+/// The pad's ANALOG button. Queued until the pad is next idle between
+/// packets; the pad ignores it while the game holds the mode lock.
+export fn pressAnalogButton() void {
+    machine.bus.sio.pad.pressAnalogButton();
+}
+
+/// The mode LED and both motors in one number: bit 0 analog mode, bits 8-15
+/// the small motor (0 or 255), bits 16-23 the large one. A reset reads
+/// digital and still.
+export fn padStatus() u32 {
+    const p = &machine.bus.sio.pad;
+    return @as(u32, @intFromBool(p.analog)) | @as(u32, p.motor_small) << 8 | @as(u32, p.motor_large) << 16;
+}
+
 /// 0 the interpreter, 1 the cached interpreter. 2, the JIT, emits arm64 host
 /// code and is ENGINE_UNAVAILABLE in every wasm build.
 export fn setCpuEngine(engine: u32) i32 {

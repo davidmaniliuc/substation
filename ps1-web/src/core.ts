@@ -38,6 +38,25 @@ export interface DiscBytes {
   disc?: number;
 }
 
+/** What `identifyExe` reads from an executable. */
+export interface ExeInfo {
+  format: 'psexe' | 'cpe' | 'elf';
+  /** From a PS-X EXE header's licence marker; null for anything else. */
+  region: Region | null;
+  /** The file's fingerprint as 16 hex digits: what a savestate taken while it runs names. */
+  fingerprint: string;
+}
+
+/** The pad as the game left it, for a mode light and rumble. */
+export interface PadStatus {
+  /** True in analog mode (the LED). */
+  analog: boolean;
+  /** The small motor: 0 or 255. */
+  smallMotor: number;
+  /** The large motor: 0..255. */
+  largeMotor: number;
+}
+
 export const AUDIO_SAMPLE_RATE = 44100;
 
 export interface Frame {
@@ -62,6 +81,9 @@ interface Exports {
   reset(): number;
   runFrame(): void;
   setButtons(mask: number): void;
+  setAnalog(lx: number, ly: number, rx: number, ry: number): void;
+  pressAnalogButton(): void;
+  padStatus(): number;
   setCpuEngine(engine: number): number;
   setFastBoot(on: number): void;
   alloc(len: number): number;
@@ -79,6 +101,19 @@ interface Exports {
     ppfLen: number,
     disc: number,
   ): number;
+  swapDisc(
+    bin: number,
+    binLen: number,
+    cue: number,
+    cueLen: number,
+    sbi: number,
+    sbiLen: number,
+    ppf: number,
+    ppfLen: number,
+    disc: number,
+  ): number;
+  loadExe(exe: number, exeLen: number, libps: number, libpsLen: number): number;
+  identifyExe(exe: number, exeLen: number): number;
   identifyDisc(bin: number, binLen: number, sheet: number, sheetLen: number, disc: number): number;
   renderFrame(): number;
   frameWidth(): number;
@@ -154,38 +189,36 @@ export class Ps1Core {
   /**
    * Inserts a disc. The image is copied into wasm memory once and stays
    * there until the next disc; a refused disc leaves the previous one in.
+   * A running executable is dropped for it.
    */
   loadDisc(disc: DiscBytes): void {
-    const cue =
-      disc.cue === undefined ? new Uint8Array() : typeof disc.cue === 'string' ? this.encoder.encode(disc.cue) : disc.cue;
-    const sbi = disc.sbi ?? new Uint8Array();
-    const ppf = disc.ppf ?? new Uint8Array();
-    const bin = this.copyIn(disc.bin);
-    let owned = false;
-    try {
-      this.withCopy(cue, (cuePtr) =>
-        this.withCopy(sbi, (sbiPtr) =>
-          this.withCopy(ppf, (ppfPtr) =>
-            check(
-              this.wasm.loadDisc(
-                bin,
-                disc.bin.byteLength,
-                cuePtr,
-                cue.byteLength,
-                sbiPtr,
-                sbi.byteLength,
-                ppfPtr,
-                ppf.byteLength,
-                disc.disc ?? 0,
-              ),
-            ),
-          ),
-        ),
-      );
-      owned = true; // the module keeps the image now
-    } finally {
-      if (!owned) this.release(bin, disc.bin.byteLength);
-    }
+    this.insert(disc, this.wasm.loadDisc);
+  }
+
+  /**
+   * The next disc of a running game, through the tray: it opens and closes
+   * an emulated second later, which tells the game to re-read the TOC.
+   * `loadDisc` on a running game is invisible to it. Refused with `BUSY`
+   * while an executable runs.
+   */
+  swapDisc(disc: DiscBytes): void {
+    this.insert(disc, this.wasm.swapDisc);
+  }
+
+  /**
+   * Boots a PS-X EXE, CPE or ELF in place of a disc, from a cold BIOS: any
+   * disc is taken out. `libps` is a `libps.exe` found beside it. `reset` and
+   * `loadState` boot it again; `loadDisc` drops it.
+   */
+  loadExe(exe: Uint8Array, libps: Uint8Array = new Uint8Array()): void {
+    this.withCopy(exe, (e) =>
+      this.withCopy(libps, (l) => check(this.wasm.loadExe(e, exe.byteLength, l, libps.byteLength))),
+    );
+  }
+
+  /** What an executable says about itself, with no BIOS. Anything `loadExe` would refuse throws `BAD_EXE`. */
+  identifyExe(exe: Uint8Array): ExeInfo {
+    return this.withCopy(exe, (p) => this.result(this.wasm.identifyExe(p, exe.byteLength)) as ExeInfo);
   }
 
   /**
@@ -235,6 +268,22 @@ export class Ps1Core {
     this.wasm.setButtons(mask & 0xffff);
   }
 
+  /** The sticks: 0..255 each, 0x80 centred, Y grows DOWN. The game reads them only in analog mode. */
+  setAnalog(lx: number, ly: number, rx: number, ry: number): void {
+    this.wasm.setAnalog(lx & 0xff, ly & 0xff, rx & 0xff, ry & 0xff);
+  }
+
+  /** The pad's ANALOG button. Takes effect between packets; a game that locks the mode ignores it. */
+  pressAnalogButton(): void {
+    this.wasm.pressAnalogButton();
+  }
+
+  /** The mode LED and both motors. Read after each `runFrame`. */
+  padStatus(): PadStatus {
+    const s = this.wasm.padStatus();
+    return { analog: (s & 1) !== 0, smallMotor: (s >>> 8) & 0xff, largeMotor: (s >>> 16) & 0xff };
+  }
+
   /** A new machine with the same BIOS, disc and memory cards. */
   reset(): void {
     check(this.wasm.reset());
@@ -276,6 +325,40 @@ export class Ps1Core {
   /** All-or-nothing: a refused state leaves the running machine untouched. */
   loadState(bytes: Uint8Array): void {
     this.withCopy(bytes, (p) => check(this.wasm.loadState(p, bytes.byteLength)));
+  }
+
+  /** Copies the disc's parts in and hands them to `load`, which owns `bin` only on success. */
+  private insert(disc: DiscBytes, load: Exports['loadDisc']): void {
+    const cue =
+      disc.cue === undefined ? new Uint8Array() : typeof disc.cue === 'string' ? this.encoder.encode(disc.cue) : disc.cue;
+    const sbi = disc.sbi ?? new Uint8Array();
+    const ppf = disc.ppf ?? new Uint8Array();
+    const bin = this.copyIn(disc.bin);
+    let owned = false;
+    try {
+      this.withCopy(cue, (cuePtr) =>
+        this.withCopy(sbi, (sbiPtr) =>
+          this.withCopy(ppf, (ppfPtr) =>
+            check(
+              load(
+                bin,
+                disc.bin.byteLength,
+                cuePtr,
+                cue.byteLength,
+                sbiPtr,
+                sbi.byteLength,
+                ppfPtr,
+                ppf.byteLength,
+                disc.disc ?? 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      owned = true; // the module keeps the image now
+    } finally {
+      if (!owned) this.release(bin, disc.bin.byteLength);
+    }
   }
 
   /** Runs `use` on an uninitialised wasm buffer of `len` bytes, freeing it afterwards. */

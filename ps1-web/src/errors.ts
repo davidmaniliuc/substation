@@ -20,6 +20,7 @@ export type Ps1ErrorCode =
   | 'BAD_PPF'
   | 'PPF_MISMATCH'
   | 'STATE_PATCH'
+  | 'BUSY'
   | 'BAD_EXE'
   | 'BAD_ECM'
   | 'BAD_CCD'
@@ -51,6 +52,7 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-18, 'BAD_PPF'],
   [-19, 'PPF_MISMATCH'],
   [-20, 'STATE_PATCH'],
+  [-24, 'BUSY'],
   [-27, 'BAD_EXE'],
   [-28, 'BAD_ECM'],
   [-29, 'BAD_CCD'],
@@ -80,6 +82,7 @@ const messages: Record<Ps1ErrorCode, string> = {
   NO_HISTORY: 'There is no rewind history to step back through',
   BAD_PPF: 'The .ppf file is not a PPF patch this emulator can read',
   PPF_MISMATCH: 'The .ppf patch was made for a different version of this disc',
+  BUSY: 'A machine running an executable has no disc to swap: use loadDisc',
   BAD_EXE: 'Not a PlayStation executable this emulator can boot',
   BAD_ECM: 'The .ecm file is not a valid ECM-compressed image',
   BAD_CCD: 'The CloneCD set (.ccd with its .img) could not be read',
