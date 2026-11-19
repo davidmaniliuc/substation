@@ -1,6 +1,6 @@
 {
   "name": "@davidmaniliuc/substation",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A PlayStation emulator compiled to WebAssembly, with a typed TypeScript core",
   "type": "module",
   "main": "./dist/index.js",
