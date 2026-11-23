@@ -57,6 +57,13 @@ struct VideoCommands: Commands {
             }
             .pickerStyle(.menu)
 
+            Picker("Display Effect", selection: $model.displayEffect) {
+                ForEach(DisplayEffect.allCases) { effect in
+                    Text(effect.title).tag(effect)
+                }
+            }
+            .pickerStyle(.menu)
+
             // Per game, unlike every entry above: with no game running (or a
             // disc with no serial) there is no game to file the choice under,
             // so the whole submenu is disabled. Automatic names what it

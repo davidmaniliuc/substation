@@ -152,6 +152,11 @@ enum SettingsCopy {
         description: "Smooths 2D graphics, including menus and text."
     )
 
+    static let displayEffect = SettingInfo(
+        title: "Display Effect",
+        description: "Gives the picture a retro screen look. Screenshots stay clean."
+    )
+
     static let vramReadbacks = SettingInfo(
         title: "Accurate VRAM Readbacks",
         description: "Fixes graphics in the few games that read video memory back."
@@ -264,7 +269,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering, textureFiltering, spriteTextureFiltering, vramReadbacks,
+        internalResolution, dithering, textureFiltering, spriteTextureFiltering, displayEffect, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, quitGameKey, controllers, pauseMenuKey, vibration,

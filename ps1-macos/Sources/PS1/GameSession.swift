@@ -94,6 +94,7 @@ struct SessionSettings: Equatable, Sendable {
     /// The player's CPU clock in percent; 100 is off. The session folds the
     /// per-game table under it.
     var cpuOverclock: Int = 100
+    var displayEffect: DisplayEffect = .none
 
     var c: Ps1SessionSettings {
         Ps1SessionSettings(
@@ -109,7 +110,8 @@ struct SessionSettings: Equatable, Sendable {
             pgxp: pgxp.c,
             pgxp_use_presets: pgxpUsePresets ? 1 : 0,
             vram_readbacks: UInt8(vramReadbacks.rawValue),
-            cpu_overclock: Int32(clamping: cpuOverclock))
+            cpu_overclock: Int32(clamping: cpuOverclock),
+            display_effect: Int32(displayEffect.rawValue))
     }
 }
 

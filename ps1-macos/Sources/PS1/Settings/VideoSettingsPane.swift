@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Internal resolution, dithering, the two texture filters and the running
-/// game's VRAM readbacks: the Video menu's entries.
+/// Internal resolution, dithering, the two texture filters, the display
+/// effect and the running game's VRAM readbacks: the Video menu's entries.
 struct VideoSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -45,6 +45,18 @@ struct VideoSettingsPane: View {
                     Picker(SettingsCopy.spriteTextureFiltering.title, selection: $model.spriteFilter) {
                         ForEach(TextureFilter.allCases) { filter in
                             Text(filter.title).tag(filter)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
+            Section {
+                SettingRow(SettingsCopy.displayEffect) {
+                    Picker(SettingsCopy.displayEffect.title, selection: $model.displayEffect) {
+                        ForEach(DisplayEffect.allCases) { effect in
+                            Text(effect.title).tag(effect)
                         }
                     }
                     .labelsHidden()

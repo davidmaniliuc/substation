@@ -452,6 +452,17 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// The display effect, persisted, and handed over like `textureFilter`.
+    private var displayEffectSetting = DisplayEffectSetting()
+
+    public var displayEffect: DisplayEffect {
+        get { displayEffectSetting.effect }
+        set {
+            displayEffectSetting.set(newValue)
+            pushSettings()
+        }
+    }
+
     /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above. Every change hands the
     /// session every setting in one `setSettings`.
@@ -661,7 +672,8 @@ public final class EmulatorViewModel {
                         spriteFilter: spriteFilter, pgxp: playerPgxp,
                         pgxpUsePresets: pgxpUsePresets,
                         vramReadbacks: vramReadbacks,
-                        cpuOverclock: cpuOverclockSetting.effective)
+                        cpuOverclock: cpuOverclockSetting.effective,
+                        displayEffect: displayEffect)
     }
 
     /// The one hand-over of every setting to the session.

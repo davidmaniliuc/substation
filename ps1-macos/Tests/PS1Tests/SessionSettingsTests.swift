@@ -6,7 +6,7 @@ import Testing
 /// `SessionSettings` as it crosses `ps1_session_set_settings`.
 struct SessionSettingsTests {
     @Test func theHeaderAgreesOnTheSize() {
-        #expect(MemoryLayout<Ps1SessionSettings>.size == 64)
+        #expect(MemoryLayout<Ps1SessionSettings>.size == 72)
     }
 
     @Test func aSettingsValueCrossesFieldForField() {
@@ -17,9 +17,9 @@ struct SessionSettingsTests {
         let s = SessionSettings(gain: 0.5, cpuEngine: .recompiler, runaheadFrames: 2,
                                 rewindBudget: 256 << 20, scale: 4, dither: .native,
                                 textureFilter: .bilinear, spriteFilter: .bilinear, pgxp: pgxp,
-                                pgxpUsePresets: true, vramReadbacks: .off)
+                                pgxpUsePresets: true, vramReadbacks: .off, displayEffect: .crt)
         let c = s.c
-        #expect(c.size == 64)
+        #expect(c.size == 72)
         #expect(c.gain == 0.5)
         #expect(c.cpu_engine == 2)
         #expect(c.runahead == 2)
@@ -41,6 +41,7 @@ struct SessionSettingsTests {
         #expect(c.pgxp.tolerance == 2)
         #expect(c.pgxp_use_presets == 1)
         #expect(c.vram_readbacks == 2)
+        #expect(c.display_effect == 3)
     }
 }
 
@@ -110,6 +111,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
             #expect(s.dither == model.ditherMode)
             #expect(s.textureFilter == model.textureFilter)
             #expect(s.spriteFilter == model.spriteFilter)
+            #expect(s.displayEffect == model.displayEffect)
             #expect(s.pgxp.enabled == model.pgxpEnabled)
             #expect(s.pgxp.cpu == model.pgxpCpu)
             #expect(s.pgxpUsePresets == model.pgxpUsePresets)
@@ -152,6 +154,8 @@ private func makeEntry(serial: String) throws -> GameEntry {
                 return { m.textureFilter = o } }),
             ("sprite filter", { m in let o = m.spriteFilter; m.spriteFilter = o == .nearest ? .bilinear : .nearest
                 return { m.spriteFilter = o } }),
+            ("display effect", { m in let o = m.displayEffect; m.displayEffect = o == .none ? .crt : .none
+                return { m.displayEffect = o } }),
             ("pgxp", { m in let o = m.pgxpEnabled; m.pgxpEnabled = !o; return { m.pgxpEnabled = o } }),
             ("engine", { m in let o = m.cpuEngine; m.cpuEngine = o == .interpreter ? .cachedInterpreter : .interpreter
                 return { m.cpuEngine = o } }),
