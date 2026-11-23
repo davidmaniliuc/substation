@@ -22,6 +22,7 @@ test {
     _ = @import("tests/speculation_test.zig");
     _ = @import("tests/display_test.zig");
     _ = @import("tests/display_scale_test.zig");
+    _ = @import("tests/display_baseline_test.zig");
     _ = @import("tests/screenshot_test.zig");
     _ = @import("tests/layer_test.zig");
     _ = @import("tests/frame_renderer_test.zig");
