@@ -351,3 +351,79 @@ test "FrameRenderer: aScreenshotWaitsForTheFrameItsChunkBegan" {
     try harness.awaitHandler(&a.count, "aScreenshotWaitsForTheFrameItsChunkBegan");
     try expectEqual(0, a.nulls.load(.acquire));
 }
+
+// A display effect is the window's alone: a runtime choice of fragment, so it
+// rebuilds nothing and a screenshot never carries it.
+const large: fr.Settings = .{ .size_points = .{ 1280, 960 } };
+
+fn pictureFrame() [3]Command {
+    return .{ lh.fillRect(0, 0, 160, 120, 0x03E0), lh.fillRect(160, 0, 160, 120, 0x7C00), lh.fillRect(0, 120, 320, 120, 0x001F) };
+}
+
+/// The PNG a screenshot taken while `effect` is shown holds. Owned by the caller.
+fn screenshotUnder(effect: fr.Settings, expect_picture: bool) ![]u8 {
+    var b = try Bench.init(effect);
+    defer b.deinit();
+    const l = standaloneLayer(b.m);
+    defer l.release();
+    b.publish(1, &pictureFrame(), shown);
+    b.r.executeArrived();
+    b.r.present(l, 0);
+    try expectEqual(expect_picture, b.r.pass.picture != null);
+    var a: Answers = .{};
+    defer a.deinit();
+    b.r.requestScreenshot(Answers.done, &a);
+    b.r.present(l, 0.016);
+    try harness.awaitHandler(&a.count, "screenshotUnder");
+    while (b.r.shots_in_flight.load(.acquire) != 0) try std.Thread.yield();
+    try expectEqual(0, a.nulls.load(.acquire));
+    return alloc.dupe(u8, a.file.?);
+}
+
+test "FrameRenderer: aScreenshotTakenUnderAnEffectIsThePictureWithoutIt [validate]" {
+    const plain = try screenshotUnder(large, false);
+    defer alloc.free(plain);
+    for ([_]ps1_metal.display.Effect{ .sharp_bilinear, .scanlines, .crt, .composite }) |fx| {
+        var s = large;
+        s.display_effect = fx;
+        const shot = try screenshotUnder(s, true);
+        defer alloc.free(shot);
+        try check(std.mem.eql(u8, plain, shot), "a screenshot under {s} differs from one with no effect", .{@tagName(fx)});
+    }
+}
+
+test "FrameRenderer: anEffectChangeRebuildsNothing" {
+    var b = try Bench.init(large);
+    defer b.deinit();
+    b.publish(1, &pictureFrame(), shown);
+    b.r.executeArrived();
+    const texture = b.r.live.vram.texture.id;
+    const before = try nativeView(&b);
+    defer alloc.destroy(before);
+    try b.post(.{ .size_points = large.size_points, .display_effect = .crt });
+    try expectEqual(.crt, b.r.current.display_effect);
+    try expectEqual(texture, b.r.live.vram.texture.id);
+    try expect(!b.x.queue.needsResync());
+    const after = try nativeView(&b);
+    defer alloc.destroy(after);
+    try check(std.mem.eql(u16, before, after), "the effect change touched the picture", .{});
+}
+
+test "FrameRenderer: theEffectsPictureIsHeldOnlyWhileAnEffectIsShown" {
+    var b = try Bench.init(large);
+    defer b.deinit();
+    const l = standaloneLayer(b.m);
+    defer l.release();
+    b.publish(1, &pictureFrame(), shown);
+    b.r.executeArrived();
+    b.r.present(l, 0);
+    try expect(b.r.pass.picture == null);
+    try b.post(.{ .size_points = large.size_points, .display_effect = .crt });
+    b.r.present(l, 0.016);
+    try expectEqual(320, b.r.pass.picture.?.width());
+    try expectEqual(240, b.r.pass.picture.?.height());
+    try b.post(.{ .size_points = large.size_points });
+    b.r.present(l, 0.033);
+    try expect(b.r.pass.picture == null);
+    try expectEqual(3, b.r.presented.load(.monotonic));
+}

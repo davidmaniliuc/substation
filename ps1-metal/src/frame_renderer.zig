@@ -36,6 +36,9 @@ pub const Settings = struct {
     dither: pi.DitherMode = pi.default_dither,
     texture_filter: pi.TextureFilter = .nearest,
     sprite_filter: pi.TextureFilter = .nearest,
+    /// A post-process over the picture the window shows. A screenshot is
+    /// taken without it, and changing it rebuilds nothing.
+    display_effect: display.Effect = .none,
     /// The view's size in points and its backing scale: the drawable is
     /// their product, in pixels.
     size_points: [2]f64 = .{ 0, 0 },
@@ -273,7 +276,9 @@ pub const FrameRenderer = struct {
         p.scale_y = box.y;
         display.applyBand(&p, self.band, self.band_fade.eased(s.band_shown, now_s), self.drawable_px, s.size_points);
 
-        if (!self.pass.encode(cmd, drawable.texture(), self.live.vram.texture, self.live.vram.sidecar, p)) return;
+        if (s.display_effect == .none) self.pass.dropPicture();
+        const fx = display.effectParams(p, self.drawable_px);
+        if (!self.pass.encodeEffect(cmd, drawable.texture(), self.live.vram.texture, self.live.vram.sidecar, p, fx, s.display_effect)) return;
         self.encodeScreenshots(cmd, p);
         cmd.presentDrawable(drawable);
         self.commit(cmd);

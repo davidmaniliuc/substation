@@ -251,3 +251,183 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     DirectSource src = { vram, shadow, sidecar, &p };
     return finish(src.at(in), in, src, p);
 }
+
+/// What the effect fragments need beyond `Params`: the picture's sizes in
+/// texels and in drawable pixels, and the fades the sizes decide. Scalars
+/// only, so the layout is the same on both sides. Filled in by
+/// `effectParams` in ps1-metal/src/display.zig.
+struct EffectParams {
+    float picture_w;     // the picture texture, in texels
+    float picture_h;
+    float out_w;         // the letterboxed picture, in drawable pixels
+    float out_h;
+    float origin_x;      // its left edge in the drawable
+    float native_w;      // the programmed display area
+    float native_h;
+    float scan_rows;     // one per line, or per pair of interlaced lines
+    float sharp_x;       // whole drawable pixels per picture texel, at least 1
+    float sharp_y;
+    float scan_strength; // 0 below the size where a scan row has room, 1 above
+    float mask_strength; // the same for the phosphor mask
+};
+
+static_assert(sizeof(EffectParams) == 48,
+              "EffectParams in ps1-metal/src/display.zig must match field for field");
+
+/// Draws the picture the effects share: `display_color` at the internal
+/// resolution, one texel per sample-grid cell, with nothing over it.
+fragment float4 picture_fragment(VertexOut in [[stage_in]],
+                                 texture2d<uint, access::read> vram [[texture(0)]],
+                                 texture2d<uint, access::read> shadow [[texture(1)]],
+                                 texture2d<uint, access::read> sidecar [[texture(2)]],
+                                 constant Params& p [[buffer(0)]]) {
+    return display_color(in, vram, shadow, sidecar, p);
+}
+
+constexpr sampler linear_clamp(coord::normalized, filter::linear, address::clamp_to_edge);
+
+static bool effect_visible(VertexOut in, constant Params& p) {
+    return all(in.uv >= 0.0) && all(in.uv < 1.0)
+        && p.enabled != 0 && p.width != 0 && p.height != 0;
+}
+
+/// Bilinear filtering that keeps each texel's centre sharp: the blend is
+/// confined to a band one output pixel wide at the texel's edge, so a texel
+/// stays a hard square where the ratio is whole and softens only where
+/// it is not. `k` is the whole output pixels per texel; at 1 it is plain
+/// bilinear, and at a whole ratio it reads every texel at its centre.
+static float2 sharp_uv(float2 uv, float2 size, float2 k) {
+    float2 t = uv * size;
+    float2 d = fract(t) - 0.5;
+    float2 reach = 0.5 - 0.5 / k;
+    float2 f = (d - clamp(d, -reach, reach)) * k + 0.5;
+    return (floor(t) + f) / size;
+}
+
+static float3 sharp_tap(texture2d<float> picture, constant EffectParams& e, float2 uv) {
+    return picture.sample(linear_clamp, sharp_uv(uv, float2(e.picture_w, e.picture_h),
+                                                 float2(e.sharp_x, e.sharp_y))).rgb;
+}
+
+static float4 effect_finish(float3 rgb, VertexOut in, texture2d<float> picture,
+                            constant Params& p) {
+    PictureSource src = { picture };
+    return finish(float4(saturate(rgb), 1.0), in, src, p);
+}
+
+fragment float4 effect_sharp_bilinear_fragment(VertexOut in [[stage_in]],
+                                               texture2d<float> picture [[texture(0)]],
+                                               constant Params& p [[buffer(0)]],
+                                               constant EffectParams& e [[buffer(1)]]) {
+    if (!effect_visible(in, p)) return float4(0.0, 0.0, 0.0, 1.0);
+    return effect_finish(sharp_tap(picture, e, in.uv), in, picture, p);
+}
+
+/// How far a scan row's gap darkens the picture, and how much of the row it
+/// takes: the part of the row nearer its edge than this fraction is shaded.
+constant float scan_depth = 0.6;
+constant float scan_gap_from = 0.35;
+
+fragment float4 effect_scanlines_fragment(VertexOut in [[stage_in]],
+                                          texture2d<float> picture [[texture(0)]],
+                                          constant Params& p [[buffer(0)]],
+                                          constant EffectParams& e [[buffer(1)]]) {
+    if (!effect_visible(in, p)) return float4(0.0, 0.0, 0.0, 1.0);
+    float3 rgb = sharp_tap(picture, e, in.uv);
+    float edge = abs(fract(in.uv.y * e.scan_rows) - 0.5) * 2.0;
+    float gap = smoothstep(scan_gap_from, 1.0, edge);
+    return effect_finish(rgb * (1.0 - scan_depth * e.scan_strength * gap), in, picture, p);
+}
+
+/// The beam's width in scan rows: a dim row is a thin line, a bright one
+/// bleeds toward its neighbours.
+constant float beam_sigma_dim = 0.28;
+constant float beam_sigma_bright = 0.42;
+/// How much of the picture's own blur is let into the glow.
+constant float bloom_amount = 0.12;
+
+fragment float4 effect_crt_fragment(VertexOut in [[stage_in]],
+                                    texture2d<float> picture [[texture(0)]],
+                                    constant Params& p [[buffer(0)]],
+                                    constant EffectParams& e [[buffer(1)]]) {
+    if (!effect_visible(in, p)) return float4(0.0, 0.0, 0.0, 1.0);
+    float rows = e.scan_rows;
+
+    // The picture in linear light, as the beam and the mask act on light.
+    float3 plain = sharp_tap(picture, e, in.uv);
+    plain *= plain;
+
+    float y = in.uv.y * rows;
+    float first = floor(y - 0.5);
+    float3 beam = 0.0;
+    for (int i = 0; i < 2; i++) {
+        float r = first + float(i);
+        if (r < 0.0 || r >= rows) continue;
+        // The row's own colour: this column at the row's centre line.
+        float3 row = sharp_tap(picture, e, float2(in.uv.x, (r + 0.5) / rows));
+        row *= row;
+        float3 sigma = mix(float3(beam_sigma_dim), float3(beam_sigma_bright), row);
+        float3 z = (y - (r + 0.5)) / sigma;
+        beam += row * exp(-0.5 * z * z);
+    }
+    float3 col = mix(plain, beam, e.scan_strength);
+
+    // Glow: eight taps either side, along and across, in native pixels.
+    float2 native_px = 1.0 / float2(e.native_w, e.native_h);
+    float3 glow = 0.0;
+    for (int i = 0; i < 4; i++) {
+        float d = (i < 2 ? 1.5 : 3.0) * ((i & 1) == 0 ? 1.0 : -1.0);
+        float3 a = picture.sample(linear_clamp, in.uv + float2(d * native_px.x, 0.0)).rgb;
+        float3 b = picture.sample(linear_clamp, in.uv + float2(0.0, d * native_px.y)).rgb;
+        glow += a * a + b * b;
+    }
+    col = mix(col, glow / 8.0, bloom_amount * e.scan_strength);
+
+    // Aperture grille: one phosphor stripe per drawable pixel, three to a
+    // triad. The two stripes that are off dim by up to half, and the lot is
+    // rescaled so the mean over a triad stays the picture's.
+    uint stripe = uint(max(in.position.x - e.origin_x, 0.0)) % 3;
+    float3 mask = float3(1.0 - 0.5 * e.mask_strength);
+    mask[stripe] = 1.0;
+    col *= mask / ((3.0 - e.mask_strength) / 3.0);
+
+    return effect_finish(sqrt(saturate(col)), in, picture, p);
+}
+
+/// The composite signal: luma keeps most of its detail and chroma smears
+/// over a few pixels, which is what melts the dither lattice.
+constant int composite_chroma_reach = 3;
+constant float composite_chroma_sigma = 1.5;
+constant float3 composite_luma_taps = float3(0.2, 0.6, 0.2);
+
+static float3 rgb_to_yiq(float3 c) {
+    return float3(dot(c, float3(0.299, 0.587, 0.114)),
+                  dot(c, float3(0.595716, -0.274453, -0.321263)),
+                  dot(c, float3(0.211456, -0.522591, 0.311135)));
+}
+
+/// The exact inverse of `rgb_to_yiq`'s matrix.
+static float3 yiq_to_rgb(float3 c) {
+    return float3(c.x + 0.9562957 * c.y + 0.6210244 * c.z,
+                  c.x - 0.2721221 * c.y - 0.6473806 * c.z,
+                  c.x - 1.1069890 * c.y + 1.7046150 * c.z);
+}
+
+fragment float4 effect_composite_fragment(VertexOut in [[stage_in]],
+                                          texture2d<float> picture [[texture(0)]],
+                                          constant Params& p [[buffer(0)]],
+                                          constant EffectParams& e [[buffer(1)]]) {
+    if (!effect_visible(in, p)) return float4(0.0, 0.0, 0.0, 1.0);
+    float dx = 1.0 / e.native_w;
+    float luma = 0.0;
+    float2 chroma = 0.0;
+    float chroma_total = 0.0;
+    for (int k = -composite_chroma_reach; k <= composite_chroma_reach; k++) {
+        float3 yiq = rgb_to_yiq(sharp_tap(picture, e, in.uv + float2(float(k) * dx, 0.0)));
+        float w = exp(-0.5 * float(k * k) / (composite_chroma_sigma * composite_chroma_sigma));
+        chroma += yiq.yz * w;
+        chroma_total += w;
+        if (abs(k) <= 1) luma += yiq.x * composite_luma_taps[k + 1];
+    }
+    return effect_finish(yiq_to_rgb(float3(luma, chroma / chroma_total)), in, picture, p);
+}

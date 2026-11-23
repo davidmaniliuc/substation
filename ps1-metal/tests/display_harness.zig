@@ -86,6 +86,44 @@ pub fn render(
     return out;
 }
 
+/// `render` with `fx` over the picture, into a `width` x `height` target: the
+/// letterbox is fitted to the target and `e` is what the pass was given.
+pub fn renderEffect(
+    alloc: Allocator,
+    m: harness.Metal,
+    pass: *display.DisplayPass,
+    vram: mtl.Texture,
+    sidecar: mtl.Texture,
+    p: display.Params,
+    e: display.EffectParams,
+    fx: display.Effect,
+    width: u32,
+    height: u32,
+) ![]u8 {
+    const pool = objc.Pool.push();
+    defer pool.pop();
+    const target = screenshot.newTarget(m.device, .{ .width = width, .height = height }) orelse
+        return error.MetalAllocation;
+    defer target.release();
+    const cmd = m.queue.commandBuffer() orelse return error.NoCommandBuffer;
+    if (!pass.encodeEffect(cmd, target, vram, sidecar, p, e, fx)) return error.NoEncoder;
+    if (!screenshot.synchronize(cmd, target)) return error.NoEncoder;
+    cmd.commit();
+    cmd.waitUntilCompleted();
+    const out = try alloc.alloc(u8, @as(usize, width) * height * 4);
+    screenshot.bytes(target, out);
+    return out;
+}
+
+/// `p` with the letterbox of a `width` x `height` drawable.
+pub fn fitted(p: display.Params, width: u32, height: u32) display.Params {
+    var q = p;
+    const box = display.letterboxScale(@floatFromInt(width), @floatFromInt(height));
+    q.scale_x = box.x;
+    q.scale_y = box.y;
+    return q;
+}
+
 /// (b, g, r) at (x, y) of a `width`-wide BGRA image.
 pub fn pixel(bgra: []const u8, width: usize, x: usize, y: usize) [3]u8 {
     const o = (y * width + x) * 4;
