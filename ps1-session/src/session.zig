@@ -542,6 +542,7 @@ fn foldRender(r: *RenderSettings, p: settings.Settings, f: settings.Folded) bool
     r.dither = p.dither;
     r.texture_filter = p.texture_filter;
     r.sprite_filter = p.sprite_filter;
+    r.display_effect = p.display_effect;
     r.depth_buffer = f.pgxp.enabled and f.pgxp.depth_buffer;
     return !std.meta.eql(before, r.*);
 }

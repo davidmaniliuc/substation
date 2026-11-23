@@ -159,3 +159,36 @@ test "the overclock table applies only while the player's is off" {
     try expectEqual(95, settings.forSerial(.{}, .automatic, "SLES-00275").cpu_overclock);
     try expectEqual(100, settings.forSerial(.{}, .automatic, "").cpu_overclock);
 }
+
+/// The value `#define <name>` carries in `ps1_session.h`.
+fn headerValue(header: []const u8, name: []const u8) !u32 {
+    var lines = std.mem.splitScalar(u8, header, '\n');
+    while (lines.next()) |line| {
+        var words = std.mem.tokenizeAny(u8, line, " \t");
+        if (!std.mem.eql(u8, words.next() orelse continue, "#define")) continue;
+        if (!std.mem.eql(u8, words.next() orelse continue, name)) continue;
+        return std.fmt.parseInt(u32, words.next() orelse return error.NoValue, 10);
+    }
+    return error.NotInTheHeader;
+}
+
+test "theEffectsKeepTheNumbersTheHeaderGives" {
+    const header = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "ps1-capi/include/ps1_session.h", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(header);
+    const Effect = @FieldType(Settings, "display_effect");
+    inline for (.{
+        .{ "PS1_EFFECT_NONE", Effect.none },
+        .{ "PS1_EFFECT_SHARP_BILINEAR", Effect.sharp_bilinear },
+        .{ "PS1_EFFECT_SCANLINES", Effect.scanlines },
+        .{ "PS1_EFFECT_CRT", Effect.crt },
+        .{ "PS1_EFFECT_COMPOSITE", Effect.composite },
+    }) |pair| {
+        try expectEqual(@backingInt(pair[1]), try headerValue(header, pair[0]));
+    }
+    try expectEqual(5, @typeInfo(Effect).@"enum".field_names.len);
+}
+
+test "aNewSettingsValueShowsNoEffect" {
+    const s: Settings = .{};
+    try expectEqual(.none, s.display_effect);
+}

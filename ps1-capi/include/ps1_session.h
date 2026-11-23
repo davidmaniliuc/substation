@@ -103,6 +103,12 @@ typedef struct {
 #define PS1_READBACKS_ON   1   /* dual */
 #define PS1_READBACKS_OFF  2   /* GPU-only */
 
+#define PS1_EFFECT_NONE           0
+#define PS1_EFFECT_SHARP_BILINEAR 1
+#define PS1_EFFECT_SCANLINES      2
+#define PS1_EFFECT_CRT            3
+#define PS1_EFFECT_COMPOSITE      4
+
 /* Every setting the host owns, sent whole. An enum out of range keeps the
  * value the session holds; a scale is clamped to 1..8. */
 typedef struct {
@@ -121,6 +127,8 @@ typedef struct {
     int32_t         cpu_overclock;   /* percent, 10..1000; 0 or 100 is off.
                                       * The session folds the per-game table
                                       * under it while it is off. */
+    int32_t         display_effect;  /* PS1_EFFECT_*: over the window's picture
+                                      * only, never a screenshot. */
 } Ps1SessionSettings;
 
 typedef struct {

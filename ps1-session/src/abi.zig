@@ -98,6 +98,7 @@ pub const Ps1SessionSettings = extern struct {
     pgxp_use_presets: u8,
     vram_readbacks: u8,
     cpu_overclock: i32,
+    display_effect: i32,
 };
 
 fn optSlice(p: ?[*]const u8, len: usize) ?[]const u8 {
@@ -144,6 +145,7 @@ fn settingsOf(p: ?*const Ps1SessionSettings, held: settings.Settings) ?settings.
         .vram_readbacks = enumOf(VramReadbacks, c.vram_readbacks) orelse held.vram_readbacks,
         // 0, like 100, is off.
         .cpu_overclock = if (c.cpu_overclock <= 0) 100 else @intCast(std.math.clamp(c.cpu_overclock, 10, 1000)),
+        .display_effect = enumOf(metal.display.Effect, c.display_effect) orelse held.display_effect,
     };
 }
 

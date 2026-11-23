@@ -50,6 +50,7 @@ fn settingsValue() abi.Ps1SessionSettings {
         .pgxp_use_presets = 0,
         .vram_readbacks = 1,
         .cpu_overclock = 0,
+        .display_effect = 0,
     };
 }
 
@@ -214,12 +215,13 @@ test "SessionAbi: noEventAfterFree" {
     try expectEqual(seen, rates.count.load(.acquire));
 }
 
-test "SessionAbi: theSettingsStructIsSixtyFourBytes" {
-    try expectEqual(64, @sizeOf(abi.Ps1SessionSettings));
+test "SessionAbi: theSettingsStructIsSeventyTwoBytes" {
+    try expectEqual(72, @sizeOf(abi.Ps1SessionSettings));
     try expectEqual(40, @offsetOf(abi.Ps1SessionSettings, "pgxp"));
-    // The overclock took the tail padding, so the size did not move: a
-    // sender that zeroes the struct reads as off.
     try expectEqual(60, @offsetOf(abi.Ps1SessionSettings, "cpu_overclock"));
+    // The effect took the padding the overclock left and a new eight bytes
+    // for the next field's alignment.
+    try expectEqual(64, @offsetOf(abi.Ps1SessionSettings, "display_effect"));
 }
 
 test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
@@ -227,7 +229,7 @@ test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
     defer ps1_session_free(s);
     const before = s.player;
     var p = settingsValue();
-    p.size = 63;
+    p.size = 71;
     p.scale = 4;
     p.gain = 0.25;
     try expectEqual(capi.PS1_ERR_SETTINGS_SIZE, ps1_session_set_settings(s, &p));
@@ -359,4 +361,21 @@ test "SessionAbi: settingsOf maps the overclock" {
         try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
         try expectEqual(@as(u32, @intCast(c[1])), s.player.cpu_overclock);
     }
+}
+
+test "SessionAbi: settingsOf maps the display effect and keeps the held one for a value it does not know" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    p.display_effect = 3; // PS1_EFFECT_CRT
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.crt, s.player.display_effect);
+    // And it reaches what the renderer is posted.
+    try expectEqual(.crt, s.settings.display_effect);
+    p.display_effect = 99;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.crt, s.player.display_effect);
+    p.display_effect = 0;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.none, s.player.display_effect);
 }

@@ -45,6 +45,7 @@ pub const Settings = struct {
     vram_readbacks: VramReadbacks = .on,
     /// The CPU clock in percent; 100 is off.
     cpu_overclock: u32 = 100,
+    display_effect: metal.display.Effect = .none,
 };
 
 /// What the fold decides: the PGXP switches and vertex cache the machine is
