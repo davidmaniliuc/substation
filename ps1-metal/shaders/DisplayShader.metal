@@ -151,6 +151,31 @@ static float4 display_color(VertexOut in,
     return unpack1555(vram.read(addr).r);
 }
 
+/// Where a finished picture's pixels come from. The band and the saturation
+/// are written once over this, so they cannot differ between the plain display
+/// and an effect.
+struct DirectSource {
+    texture2d<uint, access::read> vram;
+    texture2d<uint, access::read> shadow;
+    texture2d<uint, access::read> sidecar;
+    constant Params* p;
+
+    float4 at(VertexOut tap) const {
+        return display_color(tap, vram, shadow, sidecar, *p);
+    }
+};
+
+/// The picture an effect pass drew from the same `display_color`, at the
+/// internal resolution: one texel per sample-grid cell.
+struct PictureSource {
+    texture2d<float> picture;
+
+    float4 at(VertexOut tap) const {
+        uint2 size = uint2(picture.get_width(), picture.get_height());
+        return picture.read(min(uint2(tap.uv * float2(size)), size - 1));
+    }
+};
+
 /// The taps' spacing, two to a standard deviation, and how far the window
 /// reaches either side of the centre, in standard deviations.
 constant float band_taps_per_sigma = 2.0;
@@ -176,11 +201,8 @@ static float band_weight(float d, float sigma, float reach) {
 /// squares. On the lattice only the weights move, and they move smoothly.
 /// The taps stay inside the picture, clamped rather than read as the black
 /// outside it, or the top edge would darken into a vignette.
-static float3 band_color(VertexOut in,
-                         texture2d<uint, access::read> vram,
-                         texture2d<uint, access::read> shadow,
-                         texture2d<uint, access::read> sidecar,
-                         constant Params& p) {
+template <typename Source>
+static float3 band_color(VertexOut in, Source src, constant Params& p) {
     float2 grid = float2(p.width * p.scale, p.height * p.scale);
     float2 sigma = p.band_sigma_px * float2(p.uv_per_px_x, p.uv_per_px_y) * grid;
     float2 stride = max(round(sigma / band_taps_per_sigma), 1.0);
@@ -199,28 +221,33 @@ static float3 band_color(VertexOut in,
             float w = wy * band_weight(x - centre.x, sigma.x, reach.x);
             VertexOut tap = in;
             tap.uv = (clamp(float2(x, y), 0.0, grid - 1.0) + 0.5) / grid;
-            sum += display_color(tap, vram, shadow, sidecar, p).rgb * w;
+            sum += src.at(tap).rgb * w;
             total += w;
         }
     }
     return sum / max(total, 1e-6) * band_tone;
 }
 
-/// The picture, under the toolbar band while the HUD shows, desaturated
+/// The picture `c`, under the toolbar band while the HUD shows, desaturated
 /// toward its Rec. 709 luma by `saturation`: the paused game greys out
 /// under the HUD.
+template <typename Source>
+static float4 finish(float4 c, VertexOut in, Source src, constant Params& p) {
+    bool inPicture = all(in.uv >= 0.0) && all(in.uv < 1.0);
+    if (p.band_mix > 0.0 && in.position.y < p.band_px && inPicture) {
+        float shown = p.band_mix
+            * (1.0 - smoothstep(p.band_px - p.band_edge_px, p.band_px, in.position.y));
+        c.rgb = mix(c.rgb, band_color(in, src, p), shown);
+    }
+    float luma = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+    return float4(mix(float3(luma), c.rgb, p.saturation), c.a);
+}
+
 fragment float4 display_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
                                  texture2d<uint, access::read> shadow [[texture(1)]],
                                  texture2d<uint, access::read> sidecar [[texture(2)]],
                                  constant Params& p [[buffer(0)]]) {
-    float4 c = display_color(in, vram, shadow, sidecar, p);
-    bool inPicture = all(in.uv >= 0.0) && all(in.uv < 1.0);
-    if (p.band_mix > 0.0 && in.position.y < p.band_px && inPicture) {
-        float shown = p.band_mix
-            * (1.0 - smoothstep(p.band_px - p.band_edge_px, p.band_px, in.position.y));
-        c.rgb = mix(c.rgb, band_color(in, vram, shadow, sidecar, p), shown);
-    }
-    float luma = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
-    return float4(mix(float3(luma), c.rgb, p.saturation), c.a);
+    DirectSource src = { vram, shadow, sidecar, &p };
+    return finish(src.at(in), in, src, p);
 }
