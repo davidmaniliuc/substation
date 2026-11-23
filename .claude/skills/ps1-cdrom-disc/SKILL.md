@@ -136,7 +136,7 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
 
 ## ISO, CloneCD and ECM images (2026-10-30)
 
-Spec `docs/superpowers/specs/2026-10-30-easy-disc-formats-design.md`. Every
+Every
 frontend opens a disc through ONE function, `disc_image.open(bin, cue,
 side)`: the C ABI, the browser core and `ps1-golden` alike, so a format
 reaches all of them at once. No C ABI entry point was added; the existing
@@ -194,7 +194,7 @@ slots are told apart by CONTENT, never by a filename:
 
 ## Eboots and Alcohol images (2026-10-31)
 
-Spec `docs/superpowers/specs/2026-10-31-hard-disc-formats-design.md`. Same ONE
+Same ONE
 function, `disc_image.open(bin, cue, side, disc_index)`; the index is `u32`
 and the CORE owns its range rule. More slots, told apart by content:
 
@@ -258,7 +258,7 @@ that can disagree with a layout rule above.
 ## PPF patches
 
 A `.ppf` beside a disc is applied to the sectors the drive reads
-(`ps1-core/src/ppf.zig`, spec `docs/superpowers/specs/2026-10-10-ppf-patching-design.md`).
+(`ps1-core/src/ppf.zig`).
 
 - **An overlay, never a write.** `ppf.build` reads each sector a patch touches
   once, applies the records in file order (a later record wins; one crossing

@@ -1,6 +1,5 @@
 //! The block engines' dispatcher: one block, or one interpreter step, per
-//! `run()`; under `.jit`, the blocks linked after it (`Cpu.runFor`). See
-//! docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md.
+//! `run()`; under `.jit`, the blocks linked after it (`Cpu.runFor`).
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;

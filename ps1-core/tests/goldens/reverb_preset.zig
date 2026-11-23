@@ -3,7 +3,7 @@
 //! These exact values are duplicated by hand in
 //! `avocado_ref/src/platform/headless/reverb_golden.cpp` (gitignored). Change
 //! anything here and you must change it there and regenerate the .bin goldens
-//! — see docs/superpowers/plans/2026-08-08-spu-reverb.md, Task 1.
+//! — see Task 1 of `git show e0d8a5d:docs/superpowers/plans/2026-08-08-spu-reverb.md`.
 //!
 //! The preset is synthetic, not one of the PSX-SPX hardware presets: it is
 //! chosen for coverage, not for sound. Mixed-sign coefficients close to unity
@@ -15,7 +15,7 @@
 //! vol_r below is 0x8000. Avocado's Sample::operator* narrows (a*b)>>15 back
 //! to int16_t before the next +/-, so (-32768)*(-32768)>>15 wraps to -32768;
 //! we keep the product in i32 and let the surrounding sat() clamp it to
-//! +32767. Deliberate — see docs/superpowers/plans/2026-08-08-spu-reverb.md —
+//! +32767. Deliberate, as that plan records,
 //! but it means a future preset that does hit 0x8000 will mismatch the
 //! goldens for this reason, not because of a port bug.
 

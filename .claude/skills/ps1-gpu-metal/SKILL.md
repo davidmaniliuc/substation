@@ -1228,7 +1228,7 @@ not the encoder.
 
 ### Triangle hull instead of the bounding box (reverted)
 
-The full hull design and code are in `docs/superpowers/plans/2026-10-05-metal-renderer-performance.md`, Task 2.
+The full hull design and code are in git history: `git show e0d8a5d:docs/superpowers/plans/2026-10-05-metal-renderer-performance.md`, Task 2.
 
 **Drawing a triangle's miter-offset hull in place of its bounding box made
 Silent Hill SLOWER at every scale the task targeted, so the hull is not in
@@ -1486,8 +1486,7 @@ match at the end. With the restore disabled it fails on all four fixtures.
 
 ## GPU-only VRAM (2026-10-26)
 
-Spec: `docs/superpowers/specs/2026-10-26-gpu-only-vram-design.md`; plans
-A-D under `docs/superpowers/plans/2026-10-2*-gpu-only-vram-*.md`. A machine
+A machine
 is in one of two VRAM modes. **Dual** rasterizes in software (on the raster
 worker) beside the Metal texture, as before. **GPU-only** records without
 rasterizing (`Sink.rasterize = false`), and the render texture is the

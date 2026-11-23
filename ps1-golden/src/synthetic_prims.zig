@@ -4,8 +4,7 @@
 //! `pl-render-polygon`'s only non-empty frame carries 18 flat AND 6 Gouraud
 //! triangles, so no fixture in the Phase A2 corpus can gate a flat-only
 //! rasterizer. This one puts ONE FEATURE GROUP PER FRAME, in a fixed order
-//! that the Swift tests index by number — see the table in
-//! docs/superpowers/plans/2026-08-27-metal-renderer-phase-b.md. Do not
+//! that the tests index by number. Do not
 //! reorder or insert frames; append instead. Nine frames as of Phase 5's
 //! Task 8: frame 8 is the depth buffer rung, appended after the Phase B/4
 //! ladder (frames 0-7) with PGXP and every depth setting turned on.

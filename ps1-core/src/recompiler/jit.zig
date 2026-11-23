@@ -1,6 +1,5 @@
 //! The arm64 JIT (`.jit`): a block emitted as host code; it computes
 //! exactly what `.cached` computes and shares its goldens (`trace-block/`).
-//! See docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md.
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;

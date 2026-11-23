@@ -521,8 +521,7 @@ identifier to find the open window again on the next ⌘,.
 
 **Games open in windows of their own, several at once, ONE playing**
 (`GameWindowMode`, `GameWindowSetting`, key `gameWindow`, Settings ▸
-General ▸ Open Games In; default Library Window; spec
-`docs/superpowers/specs/2026-10-29-multiple-game-windows-design.md`, built
+General ▸ Open Games In; default Library Window; built
 2026-10-30). In New Window mode every game opened gets a window and stays
 open; Library Window mode keeps exactly one game, in the library's window,
 and replaces it on the next load. **Only one game ever runs**: the one whose
@@ -1106,8 +1105,8 @@ at that only if the hardware check shows it.
 
 ## The in-game HUD (2026-10-10)
 
-Design record: `docs/superpowers/handoffs/2026-10-10-ingame-hud-redesign.md`;
-spec `docs/superpowers/specs/2026-10-10-ingame-hud-design.md`. `GameScreen`
+Design record: `docs/superpowers/handoffs/2026-10-10-ingame-hud-redesign.md`.
+`GameScreen`
 composes the picture, `TitleStrip` (top gradient: title, `60 FPS · Playing
 for 42 min`; no clock or battery in fullscreen, taken out on request), `GameHUD` (the bar:
 `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`), `BadgeStack`
@@ -1223,7 +1222,7 @@ hover then the same `surfaceMove(.confirm)` a key sends.
 
 ## App Intents: Spotlight, Shortcuts and Siri (2026-10-30)
 
-Spec `docs/superpowers/specs/2026-10-30-app-intents-design.md`. Everything
+Everything
 is in the app target (`Sources/PS1/Intents/`): no extension, no App Group,
 no entitlement. Xcode extracts the metadata at build
 (`Contents/Resources/Metadata.appintents`); read `extract.actionsdata` to

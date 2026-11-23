@@ -611,7 +611,7 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   modulation colour under `flag_color_perspective`. A textured RECTANGLE is
   still affine permanently, and so is every flat-shaded primitive.
 
-**JIT** (the reasoning is in `docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md`, "As built (Plan 5)", and `recompiler/arm64/link.zig`'s module comment)
+**JIT** (the reasoning is in `recompiler/arm64/link.zig`'s module comment, and in "As built (Plan 5)" of `git show e0d8a5d:docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md`)
 
 - **Under PGXP the JIT lowers by tier, and a tier change flushes.**
   `run.pgxpTier` reads the two switches once per compile, and every family
