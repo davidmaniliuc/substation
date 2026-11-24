@@ -11,8 +11,36 @@ private func uniqueKey() -> String { "test-texture-filter-\(UUID().uuidString)" 
     // The enum MIRRORS PrimInstance.h's PS1_FILTER_*, and the uniform carries
     // the raw value straight to the GPU: a renumbering on one side alone
     // compiles and silently selects the other filter.
-    #expect(TextureFilter.nearest.uniformValue == UInt32(PS1_FILTER_NEAREST))
-    #expect(TextureFilter.bilinear.uniformValue == UInt32(PS1_FILTER_BILINEAR))
+    let header: [(TextureFilter, UInt32)] = [
+        (.nearest, UInt32(PS1_FILTER_NEAREST)), (.bilinear, UInt32(PS1_FILTER_BILINEAR)),
+        (.bilinearNoEdge, UInt32(PS1_FILTER_BILINEAR_NO_EDGE)), (.jinc2, UInt32(PS1_FILTER_JINC2)),
+        (.jinc2NoEdge, UInt32(PS1_FILTER_JINC2_NO_EDGE)), (.xbr, UInt32(PS1_FILTER_XBR)),
+        (.xbrNoEdge, UInt32(PS1_FILTER_XBR_NO_EDGE)), (.scale2x, UInt32(PS1_FILTER_SCALE2X)),
+        (.scale3x, UInt32(PS1_FILTER_SCALE3X)), (.mmpx, UInt32(PS1_FILTER_MMPX)),
+        (.mmpxEnhanced, UInt32(PS1_FILTER_MMPX_ENHANCED)), (.mmpxAdvanced, UInt32(PS1_FILTER_MMPX_ADVANCED)),
+    ]
+    #expect(header.count == TextureFilter.allCases.count)
+    for (filter, value) in header {
+        #expect(filter.uniformValue == value, "\(filter)")
+    }
+}
+
+@Test func theFiltersAreListedInMenuOrder() {
+    #expect(TextureFilter.allCases.map(\.title) == [
+        "Nearest-Neighbour", "Bilinear", "Bilinear (No Edge Blending)",
+        "JINC2 (Slow)", "JINC2 (Slow, No Edge Blending)",
+        "xBR (Very Slow)", "xBR (Very Slow, No Edge Blending)",
+        "Scale2x (EPX)", "Scale3x (Slow)",
+        "MMPX (Slow)", "MMPX Enhanced (Slow)", "MMPX Advanced (Very Slow)",
+    ])
+}
+
+@Test func aFilterSavedBeforeEdgeBlendingStillLoadsAsNoEdgeBilinear() {
+    let key = uniqueKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    // 1 was the only bilinear there was, and it never blended edges.
+    UserDefaults.standard.set(1, forKey: key)
+    #expect(TextureFilterSetting(key: key).filter == .bilinearNoEdge)
 }
 
 @Test func anUnusedTextureFilterKeyLoadsAsNearest() {
@@ -48,8 +76,8 @@ private func uniqueKey() -> String { "test-texture-filter-\(UUID().uuidString)" 
 @Test func anUnrecognisedTextureFilterFallsBackToNearest() {
     let key = uniqueKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
-    // A filter written by a future build (JINC2, xBR) and then downgraded.
-    UserDefaults.standard.set(7, forKey: key)
+    // A filter written by a future build and then downgraded.
+    UserDefaults.standard.set(12, forKey: key)
     #expect(TextureFilterSetting(key: key).filter == .nearest)
 }
 
@@ -76,7 +104,7 @@ private func uniqueSpriteKey() -> String { "test-sprite-filter-\(UUID().uuidStri
 @Test func anUnrecognisedSpriteFilterFallsBackToNearest() {
     let key = uniqueSpriteKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
-    UserDefaults.standard.set(7, forKey: key)
+    UserDefaults.standard.set(12, forKey: key)
     #expect(SpriteFilterSetting(key: key).filter == .nearest)
 }
 

@@ -3,24 +3,46 @@ import Foundation
 /// How a textured primitive samples its texture in the picture the player sees.
 ///
 /// Display-only: the filtered colour reaches the true-colour sidecar and
-/// never VRAM, and the hole, the STP bit and VRAM's value all stay on the
-/// nearest texel, so no gate can tell the two apart. Two settings carry it:
+/// never VRAM, and VRAM's value and its STP bit stay on the nearest texel, so
+/// no gate can tell the filters apart. Two settings carry it:
 /// `TextureFilterSetting` for 3D primitives and `SpriteFilterSetting` for
 /// sprites, the split `Rasterizer.metal`'s `ps1_is_sprite` decides.
 /// `PrimInstance.h`'s `PS1_FILTER_*` are the shader's half, pinned by
 /// `textureFilterRawValuesMatchTheShaderHeader`.
+///
+/// The raw values are persisted and are NOT in declaration order: the cases
+/// are declared in menu order, and `bilinearNoEdge` keeps the 1 that plain
+/// "Bilinear" had before the edge-blending variant existed.
 public enum TextureFilter: Int, CaseIterable, Identifiable, Sendable {
     case nearest = 0
-    /// DuckStation's "Bilinear (No Edge Blending)". Plain "Bilinear", which
-    /// also softens cut-out edges, is a separate later case.
-    case bilinear = 1
+    case bilinear = 2
+    case bilinearNoEdge = 1
+    case jinc2 = 3
+    case jinc2NoEdge = 4
+    case xbr = 5
+    case xbrNoEdge = 6
+    case scale2x = 7
+    case scale3x = 8
+    case mmpx = 9
+    case mmpxEnhanced = 10
+    case mmpxAdvanced = 11
 
     public var id: Int { rawValue }
 
     public var title: String {
         switch self {
         case .nearest: return "Nearest-Neighbour"
-        case .bilinear: return "Bilinear (No Edge Blending)"
+        case .bilinear: return "Bilinear"
+        case .bilinearNoEdge: return "Bilinear (No Edge Blending)"
+        case .jinc2: return "JINC2 (Slow)"
+        case .jinc2NoEdge: return "JINC2 (Slow, No Edge Blending)"
+        case .xbr: return "xBR (Very Slow)"
+        case .xbrNoEdge: return "xBR (Very Slow, No Edge Blending)"
+        case .scale2x: return "Scale2x (EPX)"
+        case .scale3x: return "Scale3x (Slow)"
+        case .mmpx: return "MMPX (Slow)"
+        case .mmpxEnhanced: return "MMPX Enhanced (Slow)"
+        case .mmpxAdvanced: return "MMPX Advanced (Very Slow)"
         }
     }
 

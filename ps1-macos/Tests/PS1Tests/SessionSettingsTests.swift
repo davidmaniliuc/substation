@@ -16,7 +16,7 @@ struct SessionSettingsTests {
                                 tolerance: 2)
         let s = SessionSettings(gain: 0.5, cpuEngine: .recompiler, runaheadFrames: 2,
                                 rewindBudget: 256 << 20, scale: 4, dither: .native,
-                                textureFilter: .bilinear, spriteFilter: .bilinear, pgxp: pgxp,
+                                textureFilter: .bilinear, spriteFilter: .mmpxAdvanced, pgxp: pgxp,
                                 pgxpUsePresets: true, vramReadbacks: .off, displayEffect: .crt)
         let c = s.c
         #expect(c.size == 72)
@@ -26,8 +26,8 @@ struct SessionSettingsTests {
         #expect(c.rewind_budget == 256 << 20)
         #expect(c.scale == 4)
         #expect(c.dither == 1)
-        #expect(c.texture_filter == 1)
-        #expect(c.sprite_filter == 1)
+        #expect(c.texture_filter == 2)
+        #expect(c.sprite_filter == 11)
         #expect(c.pgxp.enabled == 1)
         #expect(c.pgxp.cpu == 1)
         #expect(c.pgxp.culling == 1)
