@@ -38,6 +38,15 @@ fn holeTriangle() Command {
     return fh.texturedTriangle(.{ .u0 = 0, .u1 = 3 })[1];
 }
 
+fn expand(c: u16) [3]u8 {
+    var out: [3]u8 = undefined;
+    for (&out, 0..) |*o, i| {
+        const v: u8 = @intCast((c >> @intCast(5 * i)) & 0x1F);
+        o.* = v << 3 | v >> 2;
+    }
+    return out;
+}
+
 const Pixel = struct { vram: u16, rgb: [3]u8, present: bool };
 
 fn pixelAt(f: harness.Frame, x: usize, y: usize) Pixel {
@@ -125,5 +134,32 @@ test "edgeBlendingMixesTheBackgroundInAndNoEdgeNeverDoes" {
         } else {
             try check(c.mixed == 0, "{t}: {d} subtexels mix the fill into the texel", .{ filter, c.mixed });
         }
+    }
+}
+
+test "aFilterGridDrawsItsTexelsOneToOne" {
+    // The port harness itself, under Nearest: every subtexel shows its texel,
+    // or the background where the texel is a hole, in both shapes.
+    const m = try harness.metal();
+    defer m.deinit();
+    const grid = [_]u16{
+        red,  0,     blue,
+        blue, green, red,
+    };
+    const shapes = [_]fh.GridOptions{
+        .{ .texels = &grid, .cols = 3, .filter = .nearest, .scale = 2, .background = 0x0421 },
+        .{ .texels = &grid, .cols = 3, .filter = .nearest, .scale = 2, .background = 0x0421, .shape = .triangles, .magnify = 3 },
+    };
+    for (shapes) |o| {
+        const g = try fh.filterGrid(m, o);
+        defer g.deinit();
+        const span = @as(usize, o.scale) * (if (o.shape == .rectangle) 1 else o.magnify);
+        try check(g.width == 3 * span and g.height == 2 * span, "{t}: the drawing is {d} x {d}", .{ o.shape, g.width, g.height });
+        for (0..g.height) |y| for (0..g.width) |x| {
+            const texel = grid[(y / span) * 3 + x / span];
+            const want = if (texel == 0) o.background else texel;
+            try check(g.vram(x, y) == want, "{t} ({d}, {d}): VRAM {x:0>4}, want {x:0>4}", .{ o.shape, x, y, g.vram(x, y), want });
+            try check(g.present(x, y) and std.mem.eql(u8, &g.rgb(x, y), &expand(want)), "{t} ({d}, {d}): the sidecar is not the texel", .{ o.shape, x, y });
+        };
     }
 }

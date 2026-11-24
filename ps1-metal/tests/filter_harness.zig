@@ -201,3 +201,99 @@ pub fn overDarkRed(fill_size: i32, draw: [2]Command) [5]Command {
         .{ .kind = .latch_texpage, .tpage = page16 | (1 << 5) },
     } ++ draw;
 }
+
+// MARK: A filter's own picture
+
+/// What a filter port's test draws: `texels` (row-major, `cols` a row, raw
+/// 16bpp with 0 a hole) placed at the page origin, drawn at (300, 300) over a
+/// `background` fill with `filter` as BOTH settings, so the primitive's class
+/// does not matter.
+///
+/// `.rectangle` maps one texel to one native pixel, so each texel covers
+/// `scale` x `scale` subtexels. `.triangles` draws the same grid as two
+/// screen-aligned triangles magnified `magnify` times, which takes the
+/// triangle path's UV limits and centre interpolation instead.
+///
+///     const g = try fh.filterGrid(m, .{ .texels = &grid, .cols = 4, .scale = 4, .filter = .xbr });
+///     defer g.deinit();
+///     const c = g.rgb(5, 3); // the sidecar at subtexel (5, 3) of the drawing
+pub const GridOptions = struct {
+    texels: []const u16,
+    cols: usize,
+    filter: TextureFilter,
+    scale: u32 = 1,
+    shape: enum { rectangle, triangles } = .rectangle,
+    magnify: usize = 1,
+    dither: DitherMode = .true_color,
+    background: u16 = 0,
+};
+
+/// One `filterGrid` frame, addressed relative to the drawing.
+pub const Grid = struct {
+    frame: Frame,
+    /// The drawing's size in subtexels.
+    width: usize,
+    height: usize,
+
+    pub fn deinit(self: Grid) void {
+        self.frame.deinit(alloc);
+    }
+
+    fn sidecarIndex(self: Grid, x: usize, y: usize) usize {
+        const k = self.frame.scale;
+        return ((300 * k + y) * self.frame.width + 300 * k + x) * 4;
+    }
+
+    /// The sidecar's colour at subtexel (x, y) of the drawing.
+    pub fn rgb(self: Grid, x: usize, y: usize) [3]u8 {
+        const i = self.sidecarIndex(x, y);
+        return self.frame.sidecar.?[i..][0..3].*;
+    }
+
+    /// Whether the sidecar holds a colour of its own at subtexel (x, y)
+    /// rather than deferring to VRAM's.
+    pub fn present(self: Grid, x: usize, y: usize) bool {
+        return self.frame.sidecar.?[self.sidecarIndex(x, y) + 3] == 255;
+    }
+
+    /// VRAM at subtexel (x, y) of the drawing.
+    pub fn vram(self: Grid, x: usize, y: usize) u16 {
+        const k = self.frame.scale;
+        return self.frame.scaled[(300 * k + y) * self.frame.width + 300 * k + x];
+    }
+};
+
+pub fn filterGrid(m: Metal, o: GridOptions) !Grid {
+    const rows = o.texels.len / o.cols;
+    const v = try blankVram();
+    defer alloc.destroy(v);
+    for (0..rows) |y| @memcpy(v[y * w + page_x ..][0..o.cols], o.texels[y * o.cols ..][0..o.cols]);
+
+    const span = if (o.shape == .rectangle) 1 else o.magnify;
+    const pw: i16 = @intCast(o.cols * span);
+    const ph: i16 = @intCast(rows * span);
+    const fill: i32 = (@max(pw, ph) + 24 + 15) & ~@as(i32, 15);
+    var records: [4]Command = undefined;
+    records[0] = fullDrawingArea();
+    records[1] = .{ .kind = .fill_rect, .value = o.background, .x = 288, .y = 288, .w = fill, .h = fill };
+    var n: usize = 2;
+    switch (o.shape) {
+        .rectangle => {
+            records[n] = texturedRectangle(.{ .w = pw, .h = ph })[1];
+            n += 1;
+        },
+        .triangles => {
+            const uw: u8 = @intCast(o.cols);
+            const vh: u8 = @intCast(rows);
+            records[n] = mappedTriangle(.{ .{ 300, 300 }, .{ 300 + pw, 300 }, .{ 300, 300 + ph } }, .{ .{ 0, 0 }, .{ uw, 0 }, .{ 0, vh } }, .{ 0, 0, 0 })[1];
+            records[n + 1] = mappedTriangle(.{ .{ 300 + pw, 300 }, .{ 300 + pw, 300 + ph }, .{ 300, 300 + ph } }, .{ .{ uw, 0 }, .{ uw, vh }, .{ 0, vh } }, .{ 0, 0, 0 })[1];
+            n += 2;
+        },
+    }
+    const f = try shot(m, o.scale, v, o.dither, o.filter, o.filter, records[0..n]);
+    return .{
+        .frame = f,
+        .width = @as(usize, @intCast(pw)) * o.scale,
+        .height = @as(usize, @intCast(ph)) * o.scale,
+    };
+}

@@ -15,6 +15,12 @@ test {
     _ = @import("tests/scale_gate_test.zig");
     _ = @import("tests/filter_test.zig");
     _ = @import("tests/filter_edge_test.zig");
+    _ = @import("tests/filters/jinc2_test.zig");
+    _ = @import("tests/filters/xbr_test.zig");
+    _ = @import("tests/filters/scale_test.zig");
+    _ = @import("tests/filters/mmpx_test.zig");
+    _ = @import("tests/filters/mmpx_enhanced_test.zig");
+    _ = @import("tests/filters/mmpx_advanced_test.zig");
     _ = @import("tests/true_colour_test.zig");
     _ = @import("tests/pgxp_parity_test.zig");
     _ = @import("tests/interp_fuzz_test.zig");
