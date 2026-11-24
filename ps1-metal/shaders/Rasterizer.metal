@@ -2,6 +2,7 @@
 #include "PrimInstance.h"
 using namespace metal;
 #include "Ps1Color.h"
+#include "Filter.h"
 
 static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
               "Ps1PrimInstance layout changed: prim_instance.zig reads this header");
@@ -275,27 +276,10 @@ inline bool ps1_depth_passes(const device Ps1PrimInstance& p, int w0, int w1, in
     return iz >= stored;
 }
 
-/// The texture window, then the fetch: the RAW texel at (u, v), 0 meaning a
-/// hole. Everything that reads a texel goes through here, so a bilinear
-/// neighbour wraps inside the window exactly as the nearest texel does.
-/// The window is in TEXEL units, like u and v: nothing here scales.
-inline ushort ps1_window_fetch(const device Ps1PrimInstance& p,
-                               texture2d<ushort, access::read> vram, uint s,
-                               uint u, uint v) {
-    uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
-    uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
-    uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
-    uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
-    uint final_u = (u & ~mask_x) | (offset_x & mask_x);
-    uint final_v = (v & ~mask_y) | (offset_y & mask_y);
-    return ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
-                           p.clut_x, p.clut_y, final_u, final_v);
-}
-
 /// Texture-window masking, the texel fetch and optional modulation: the
 /// tail both textured paths share.
 ///
-/// Returns false for a texel-zero HOLE, which the caller treats as a discard:
+/// Returns false for a texel-zero HOLE, which VRAM treats as a discard:
 /// `TexturedShader.shade` (`gpu/shaders.zig`) returns `.draw = false`. The hole is decided on the RAW
 /// texel, BEFORE modulation, and the resulting colour comes back through an
 /// out-param rather than as a return value, because modulation maps plenty of
@@ -369,11 +353,6 @@ inline int2 ps1_centre_uv6(const device Ps1PrimInstance& p, int s, int px, int p
                                 p.v0 << 6, p.v1 << 6, p.v2 << 6, p.rw0, p.rw1, p.rw2));
 }
 
-/// A raw texel per channel in 1/8 of a five-bit step: `t5 << 3`.
-inline int3 ps1_texel8(ushort t) {
-    return int3(t & 0x1F, (t >> 5) & 0x1F, (t >> 10) & 0x1F) << 3;
-}
-
 /// One axis of the UV limits: the primitive's own texcoord range, minus its
 /// high edge. The PS1 never draws a primitive's right or bottom edge, so a
 /// cell mapped 0..32 never shows texel 32 nearest, and a filter allowed to
@@ -431,43 +410,6 @@ inline uint ps1_filter_for(const device Ps1PrimInstance& p,
     return ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter;
 }
 
-/// Bilinear filtering over the four texels around (u6, v6), the CENTRE
-/// texcoords from `ps1_centre_uv6`, for the SIDECAR only. Returns the filtered
-/// texel per channel in units of 1/8 of a five-bit step (see `ps1_filtered`).
-///
-/// Samples are texel CENTRES, so the base texel is floor((u6 - 32) / 64), a
-/// real floor because u6 - 32 can be negative. Three rules:
-/// - UV LIMITS: each sample is clamped to `ul`/`vl` (UNWRAPPED texels) and
-///   then wrapped `& 0xFF` before the window, or an atlas cell or a sprite's
-///   neighbour bleeds in. A triangle passes `ps1_uv_limit`, whose limits lie
-///   in 0..255 so the wrap is a no-op; a rectangle passes `ps1_wrap_limit`.
-/// - A HOLE has weight zero and the rest renormalise; filtering it as black
-///   draws a dark fringe around every cut-out.
-/// - All four can carry weight zero: the centre may sit a texel or more from
-///   the NEAREST texel (u, v) under minification, and all four may be holes
-///   or limited onto one. That nearest texel is never a hole (the fragment
-///   would already have discarded), so it is the answer there, at the
-///   `t5 << 3` every sidecar formula reduces to today's value from.
-inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
-                         texture2d<ushort, access::read> vram, uint s,
-                         int u6, int v6, int2 ul, int2 vl, uint u, uint v) {
-    int bu = ps1_floor_div(u6 - 32, 64), bv = ps1_floor_div(v6 - 32, 64);
-    int fu = (u6 - 32) - bu * 64, fv = (v6 - 32) - bv * 64;
-    int3 acc = int3(0);
-    int wsum = 0;
-    for (int j = 0; j < 2; j++) {
-        for (int i = 0; i < 2; i++) {
-            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, ul.x, ul.y)) & 0xFFu,
-                                        uint(clamp(bv + j, vl.x, vl.y)) & 0xFFu);
-            if (t == 0) continue;
-            int wt = (i == 0 ? 64 - fu : fu) * (j == 0 ? 64 - fv : fv);
-            acc += wt * ps1_texel8(t);
-            wsum += wt;
-        }
-    }
-    return wsum != 0 ? acc / wsum : ps1_texel8(ps1_window_fetch(p, vram, s, u, v));
-}
-
 /// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
 /// its sidecar entry through programmable blending: the same pixel via tile
 /// memory, which is a different mechanism from sampling an arbitrary VRAM
@@ -509,13 +451,19 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
     // True colour and dithering are mutually exclusive by construction: the
     // dither_o chain above matches only SCALED and NATIVE, so dither_o is
     // already 0 here and the shaded paths simply keep their eight bits.
-    ushort src;
-    ushort3 src8;
+    ushort src = 0;
+    ushort3 src8 = ushort3(0);
     uint iz = 0u;
-    // The five-bit colour a dithering mode's SIDECAR blends with. It differs
-    // from `src` only for a bilinear-filtered texel; VRAM always blends `src`.
-    bool filtered = false;
-    ushort side5 = 0;
+    // A textured primitive's nearest texel, which is VRAM's, and its
+    // modulation colour at both widths.
+    uint tu = 0, tv = 0;
+    ushort shade = 0;
+    ushort3 shade8 = ushort3(0);
+    // The filter a textured primitive's SIDECAR takes, and where it samples:
+    // `coords` in texels (centre at +0.5) inside the UV limits `ul`/`vl`.
+    uint tex_filter = PS1_FILTER_NEAREST;
+    float2 coords = float2(0.0);
+    int2 ul = int2(0), vl = int2(0);
 
     if (kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
@@ -578,8 +526,8 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
                                  p.u0 << 6, p.u1 << 6, p.u2 << 6, p.rw0, p.rw1, p.rw2);
         int v6 = ps1_interp_attr(tex_persp, w0, w1, w2, area,
                                  p.v0 << 6, p.v1 << 6, p.v2 << 6, p.rw0, p.rw1, p.rw2);
-        uint u = uint(clamp(u6 >> 6, 0, 255));
-        uint v = uint(clamp(v6 >> 6, 0, 255));
+        tu = uint(clamp(u6 >> 6, 0, 255));
+        tv = uint(clamp(v6 >> 6, 0, 255));
 
         // The modulation colour is interpolated exactly as the Gouraud path's
         // is. A flat-shaded textured polygon carries the same colour in all
@@ -600,26 +548,14 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         int sb = ps1_interp_attr(color_persp, w0, w1, w2, area,
                                  int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu),
                                  p.rw0, p.rw1, p.rw2);
-        ushort shade = ps1_pack(sr, sg, sb);
+        shade = ps1_pack(sr, sg, sb);
+        shade8 = ps1_pack8(sr, sg, sb);
 
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, ps1_pack8(sr, sg, sb),
-                        true_colour, src, src8)) {
-            discard_fragment(); return ps1_discarded();
-        }
-        // A textured primitive's transparency is decided PER TEXEL by the
-        // STP bit, not by the opcode alone.
-        transparent = transparent && (src & 0x8000) != 0;
-        // Bilinear touches the SIDECAR only. `src` (VRAM's value), the hole
-        // and the STP bit above were all decided by the nearest texel.
-        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR_NO_EDGE) {
-            int2 c6 = ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6));
-            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y,
-                                              ps1_uv_limit(p.u0, p.u1, p.u2, u),
-                                              ps1_uv_limit(p.v0, p.v1, p.v2, v), u, v),
-                                 (p.flags & PS1_PRIM_MODULATE) != 0, shade,
-                                 ps1_pack8(sr, sg, sb), dither_o, true_colour,
-                                 src & 0x8000, src8);
-            filtered = true;
+        tex_filter = ps1_filter_for(p, uni);
+        if (tex_filter != PS1_FILTER_NEAREST) {
+            coords = float2(ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6))) / 64.0;
+            ul = ps1_uv_limit(p.u0, p.u1, p.u2, tu);
+            vl = ps1_uv_limit(p.v0, p.v1, p.v2, tv);
         }
     } else if (kind == PS1_PRIM_RECT) {
         // Covered by construction: the box IS the primitive.
@@ -648,8 +584,8 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         // shader path rather than a special case of the triangle one. It is
         // computed from the NATIVE pixel: the wrap is in texel units and has
         // nothing to do with internal resolution.
-        uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
-        uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
+        tu = uint((nx - p.x0) + p.u0) & 0xFFu;
+        tv = uint((ny - p.y0) + p.v0) & 0xFFu;
         // `<< 3`, NOT ps1_expand's replication. A sprite's modulation colour
         // reaches the record already packed to five bits (`gp0.zig` calls
         // `Color.getColor16` before the sink, and `Command` has nowhere else to
@@ -657,32 +593,47 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         // is the scaling that makes `(t * c8) >> 4` reproduce `(t * c5) >> 1`
         // exactly. The sprite path is therefore unmoved by the widening, which
         // is the honest answer: no record carries the precision it would need.
-        ushort3 shade8 = ushort3((p.color & 0x1Fu) << 3, ((p.color >> 5) & 0x1Fu) << 3,
-                                 ((p.color >> 10) & 0x1Fu) << 3);
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), shade8,
-                        true_colour, src, src8)) {
-            discard_fragment(); return ps1_discarded();
-        }
-        transparent = transparent && (src & 0x8000) != 0;
-        // The sprite filter, SIDECAR only, like the triangle's: `src`, the hole
-        // and the STP bit above came from the nearest texel. The fractional
-        // texcoord is taken at the subtexel CENTRE in the triangle's six-bit
-        // units, unwrapped, so at 1x it lands on the texel centre and filters
-        // to the nearest texel exactly.
-        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR_NO_EDGE) {
-            int nu = (nx - p.x0) + p.u0, nv = (ny - p.y0) + p.v0;
-            int u6 = ((2 * px + 1) * 64) / (2 * s) - 64 * p.x0 + 64 * p.u0;
-            int v6 = ((2 * py + 1) * 64) / (2 * s) - 64 * p.y0 + 64 * p.v0;
-            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), u6, v6,
-                                              ps1_wrap_limit(p.u0, p.w, nu),
-                                              ps1_wrap_limit(p.v0, p.h, nv), u, v),
-                                 (p.flags & PS1_PRIM_MODULATE) != 0, ushort(p.color),
-                                 shade8, dither_o, true_colour, src & 0x8000, src8);
-            filtered = true;
+        shade = ushort(p.color);
+        shade8 = ushort3((p.color & 0x1Fu) << 3, ((p.color >> 5) & 0x1Fu) << 3,
+                         ((p.color >> 10) & 0x1Fu) << 3);
+        // The sprite filter samples at the subtexel CENTRE in the triangle's
+        // six-bit units, unwrapped, so at 1x it lands on the texel centre.
+        tex_filter = ps1_filter_for(p, uni);
+        if (tex_filter != PS1_FILTER_NEAREST) {
+            coords = float2(((2 * px + 1) * 64) / (2 * s) - 64 * p.x0 + 64 * p.u0,
+                            ((2 * py + 1) * 64) / (2 * s) - 64 * p.y0 + 64 * p.v0) / 64.0;
+            ul = ps1_wrap_limit(p.u0, p.w, (nx - p.x0) + p.u0);
+            vl = ps1_wrap_limit(p.v0, p.h, (ny - p.y0) + p.v0);
         }
     } else {
         discard_fragment();
         return ps1_discarded();
+    }
+
+    // The nearest texel decides VRAM's value, its STP bit and the depth, as
+    // the software rasterizer does; a filter decides the sidecar alone, and
+    // covers `cover` of it (`ps1_filter_cover`). Where the nearest texel is a
+    // hole but the filter still covers the pixel, VRAM and depth are written
+    // back unchanged and only the sidecar is painted: that is how a filter
+    // reshapes a cut-out while VRAM keeps the console's edge.
+    bool present = true;
+    float cover = 0.0;
+    ushort side5 = 0;
+    if (kind == PS1_PRIM_TEXTURED_TRI || kind == PS1_PRIM_TEXTURED_RECT) {
+        present = ps1_sample(p, vram, uint(s), tu, tv, dither_o, shade, shade8,
+                             true_colour, src, src8);
+        bool stp = (src & 0x8000) != 0;
+        if (tex_filter != PS1_FILTER_NEAREST) {
+            Ps1Filtered filtered = ps1_filter(tex_filter, Ps1TexSrc{ &p, vram, uint(s), ul, vl }, coords);
+            cover = ps1_filter_cover(tex_filter, filtered.a);
+            if (!present) stp = filtered.stp;
+            side5 = ps1_filtered(filtered.t8, (p.flags & PS1_PRIM_MODULATE) != 0, shade, shade8,
+                                 dither_o, true_colour, stp ? 0x8000 : 0, src8);
+        }
+        if (!present && cover == 0.0) { discard_fragment(); return ps1_discarded(); }
+        // A textured primitive's transparency is decided PER TEXEL by the
+        // STP bit, not by the opcode alone.
+        transparent = transparent && stp;
     }
 
     // ---- putPixel's tail (renderer.zig:8-46) ----------------------------
@@ -721,17 +672,20 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
     // `.scaled` the sidecar's whole job is to hold precisely what the display
     // would have expanded from VRAM anyway; an eight-bit composite there would
     // quietly smooth a picture the player asked to be five-bit and dithered.
+    bool filtering = tex_filter != PS1_FILTER_NEAREST;
+    ushort3 bg8 = dst_side.a != 0 ? dst_side.rgb : ps1_expand(dst);
     ushort3 out8;
     if (!transparent) {
         out8 = src8;
     } else if (true_colour) {
-        out8 = ps1_blend8(dst_side.a != 0 ? dst_side.rgb : ps1_expand(dst),
-                          src8, p.blend_mode);
+        out8 = ps1_blend8(bg8, src8, p.blend_mode);
     } else {
         // A filtered draw blends its FILTERED five-bit colour, so a dithering
         // mode shows a filtered composite; unfiltered, this is `out` exactly.
-        out8 = ps1_expand(filtered ? ps1_blend(dst, side5, p.blend_mode) : out);
+        out8 = ps1_expand(filtering ? ps1_blend(dst, side5, p.blend_mode) : out);
     }
+    if (filtering) out8 = ps1_cover(bg8, out8, cover, true_colour);
+    if (!present) return Ps1FragOut{ dst, ushort4(out8, 255), dst_depth };
 
     // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 (for a
     // textured primitive the texel's STP bit, for an untextured one 0), OR'd

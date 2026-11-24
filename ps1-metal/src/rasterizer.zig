@@ -486,13 +486,18 @@ pub const Rasterizer = struct {
         // The destination is read wherever the shader reads `dst`, `dst_side`
         // or `dst_depth`: blending, the mask check and the depth test, plus a
         // persisting depth plane, where every draw that does not write its
-        // own depth writes the stored one back. That last term carries no
-        // flag, and only `anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists`
-        // pins it: read it before narrowing this.
+        // own depth writes the stored one back. That term carries no flag,
+        // and only `anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists`
+        // pins it: read it before narrowing this. Nor does a filtered
+        // textured draw, which mixes its sidecar over the destination's and
+        // writes a covered hole's VRAM and depth back unchanged:
+        // `aCoveredHoleKeepsItsVramAndDepth` paints black without it.
+        const textured = inst.kind == Kind.textured_tri or inst.kind == Kind.textured_rect;
         const variant: PrimVariant = .{
             .kind = inst.kind,
             .reads_dst = inst.flags & (Flag.transparent | Flag.check_mask | Flag.depth_test) != 0 or
-                self.vram.depth_persists,
+                self.vram.depth_persists or
+                (textured and (self.texture_filter != .nearest or self.sprite_filter != .nearest)),
         };
         const i = self.instances.items.len;
         self.pushInstance(inst);

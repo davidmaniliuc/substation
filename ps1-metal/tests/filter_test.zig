@@ -45,13 +45,20 @@ const sameVram = fh.sameVram;
 test "theCorpusRendersIdenticalVramUnderEverySetting" {
     // THE gate. Every fixture that exists, every frame, two dither modes (a
     // dithering one, since the VRAM path there carries the offset) and two
-    // scales (3 because `/ s` is a shift at every power of two), and every
-    // combination of the two settings against Nearest/Nearest.
+    // scales (3 because `/ s` is a shift at every power of two), against
+    // Nearest/Nearest: every filter once as the texture setting and once as
+    // the sprite setting, each time beside a different one.
     // `tr1-usa-v1-1-pgxp` is the one that carries perspective texcoords.
     const m = try harness.metal();
     defer m.deinit();
     const corpus = [_][]const u8{ "synthetic-primitives", "synthetic-movers", "silent-hill-usa", "tr1-usa-v1-1", "tr1-usa-v1-1-pgxp" };
-    const settings = [_][2]TextureFilter{ .{ .nearest, .nearest }, .{ .bilinear_no_edge, .nearest }, .{ .nearest, .bilinear_no_edge }, .{ .bilinear_no_edge, .bilinear_no_edge } };
+    const filters = comptime std.enums.values(TextureFilter);
+    const settings = comptime blk: {
+        var pairs: [filters.len][2]TextureFilter = undefined;
+        pairs[0] = .{ .nearest, .nearest };
+        for (filters[1..], 1..) |f, k| pairs[k] = .{ f, filters[1 + k % (filters.len - 1)] };
+        break :blk pairs;
+    };
     var processed: usize = 0;
     for (corpus) |name| {
         if (!harness.fixtureExists(alloc, name)) continue;

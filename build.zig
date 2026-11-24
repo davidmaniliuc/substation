@@ -508,6 +508,13 @@ pub fn build(b: *std.Build) void {
     const metal_headers = [_][]const u8{
         "ps1-metal/shaders/Ps1Color.h",
         "ps1-metal/shaders/PrimInstance.h",
+        "ps1-metal/shaders/Filter.h",
+        "ps1-metal/shaders/filters/jinc2.h",
+        "ps1-metal/shaders/filters/xbr.h",
+        "ps1-metal/shaders/filters/scale.h",
+        "ps1-metal/shaders/filters/mmpx.h",
+        "ps1-metal/shaders/filters/mmpx_enhanced.h",
+        "ps1-metal/shaders/filters/mmpx_advanced.h",
     };
 
     const metal_lib = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib", "-o" });
