@@ -58,6 +58,7 @@ pub const CommandBufferStatus = enum(usize) {
 
 pub const DataType = enum(usize) {
     int = 29, // MTLDataType.h:87: MTLDataTypeInt = 29
+    uint = 33, // MTLDataType.h:92: MTLDataTypeUInt = 33
     bool = 53, // MTLDataType.h:141: MTLDataTypeBool = 53
 };
 

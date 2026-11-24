@@ -20,7 +20,7 @@ test "aResourceOptionCarriesItsStorageModeInTheSecondNibble" {
 test "theInstanceRecordAndUniformsKeepTheSizesTheShaderAsserts" {
     const prim = @import("ps1_metal").prim_instance;
     try std.testing.expectEqual(4 * 54, @sizeOf(prim.PrimInstance));
-    try std.testing.expectEqual(16, @sizeOf(prim.Uniforms));
+    try std.testing.expectEqual(8, @sizeOf(prim.Uniforms));
 }
 
 test {

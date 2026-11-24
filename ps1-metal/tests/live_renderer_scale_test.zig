@@ -355,3 +355,37 @@ test "LiveRenderer: aRebuildBuildsNoPipelines" {
     try expectEqual(first, set.prims[0][0][0].id);
     try expectEqual(first, live.rasterizer.pipelines.prims[0][0][0].id);
 }
+
+// The filters are function constants: Nearest builds no filtered table, a
+// pair is built the first time it is used and reused after, and only the
+// classes that sample a texture take one.
+test "Pipelines: aFilterPairIsBuiltOnceAndNearestBuildsNone" {
+    const pipelines = ps1_metal.pipelines;
+    const Kind = ps1_metal.prim_instance.Kind;
+    const m = try harness.metal();
+    defer m.deinit();
+    var set = try lh.pipelineSet(m);
+    defer set.deinit();
+    const pool = ps1_metal.objc.Pool.push();
+    defer pool.pop();
+
+    const none: pipelines.Filters = .{};
+    try set.useFilters(none);
+    for (set.tris) |row| for (row) |t| try expect(t == null);
+    for (set.rects) |t| try expect(t == null);
+
+    const xbr: pipelines.Filters = .{ .texture = .xbr };
+    try set.useFilters(xbr);
+    const tri: pipelines.PrimVariant = .{ .kind = Kind.textured_tri, .reads_dst = true };
+    const rect: pipelines.PrimVariant = .{ .kind = Kind.textured_rect, .reads_dst = true };
+    const flat: pipelines.PrimVariant = .{ .kind = Kind.flat_tri, .reads_dst = true };
+    const built = set.prim(true, tri, xbr).id;
+    try expect(built != set.prim(true, tri, none).id);
+    // A rectangle is always a sprite, and the sprite filter is still Nearest.
+    try expectEqual(set.prim(true, rect, none).id, set.prim(true, rect, xbr).id);
+    try expectEqual(set.prim(true, flat, none).id, set.prim(true, flat, xbr).id);
+    for (set.rects) |t| try expect(t == null);
+
+    try set.useFilters(xbr);
+    try expectEqual(built, set.prim(true, tri, xbr).id);
+}

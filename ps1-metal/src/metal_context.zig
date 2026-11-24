@@ -58,7 +58,7 @@ pub const Rig = struct {
     /// `set` is borrowed and outlives the rig; null builds one for this rig
     /// alone, which a single fixture replay can afford and a loop of them
     /// (the benchmark) should not.
-    pub const Options = struct { scale: u32 = 1, depth_buffer: bool = false, set: ?*const pipelines.Set = null };
+    pub const Options = struct { scale: u32 = 1, depth_buffer: bool = false, set: ?*pipelines.Set = null };
 
     pub fn create(alloc: Allocator, m: Metal, o: Options) !*Rig {
         const self = try alloc.create(Rig);

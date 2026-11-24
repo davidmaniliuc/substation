@@ -104,7 +104,7 @@ pub const Rasterizer = struct {
     vram: *MetalVram,
     /// Borrowed: whoever owns the `Metal` builds the set once, so a scale
     /// change rebuilds VRAM and never the ~1.15 s of cold pipelines.
-    pipelines: *const pipelines.Set,
+    pipelines: *pipelines.Set,
     scratch: mtl.Texture,
     /// The sidecar's half of the copy snapshot. Blitted in the SAME
     /// `.snapshot` step as `scratch`, so both halves of a VRAM->VRAM copy read
@@ -120,11 +120,15 @@ pub const Rasterizer = struct {
     /// the builder, so the instance bytes stay identical to the ones Gate 1
     /// checks whatever the mode is.
     dither_mode: pi.DitherMode = pi.default_dither,
-    /// How 3D textured primitives sample, for the sidecar only. A uniform for
-    /// `dither_mode`'s reason.
+    /// How 3D textured primitives sample, for the sidecar only. Folded into
+    /// the textured pipelines as a function constant, so a change takes
+    /// effect at the next `beginFrame`, which builds its pipelines.
     texture_filter: pi.TextureFilter = .nearest,
     /// How sprites sample: textured rectangles and screen-aligned 2D polygons.
     sprite_filter: pi.TextureFilter = .nearest,
+    /// The two settings as this frame draws them, fixed at `beginFrame` so
+    /// every draw in the frame picks a pipeline that exists.
+    filters: pipelines.Filters = .{},
 
     /// Whether `endFrame` blocks until the GPU has finished. True for every
     /// fixture gate, which reads VRAM back the instant `endFrame` returns.
@@ -157,7 +161,7 @@ pub const Rasterizer = struct {
     /// an upload in progress, put back after replaying one as the pixels are.
     pub const State = struct { env: DrawingEnv, transfer: WriteCursor };
 
-    pub fn init(alloc: Allocator, vram: *MetalVram, set: *const pipelines.Set) !Rasterizer {
+    pub fn init(alloc: Allocator, vram: *MetalVram, set: *pipelines.Set) !Rasterizer {
         const pool = objc.Pool.push();
         defer pool.pop();
         const device = vram.device;
@@ -242,12 +246,27 @@ pub const Rasterizer = struct {
         }
 
         self.resetFrame();
+        self.useFilters();
         if (payload.len > max_payload_words) @panic("a frame's payload is larger than the recorder's cap");
         self.payload_count = payload.len;
         if (payload.len > 0) {
             const dst: [*]u32 = @ptrCast(@alignCast(f.payload.contents()));
             @memcpy(dst[0..payload.len], payload);
         }
+    }
+
+    /// Fixes this frame's filters, building their pipelines the first time
+    /// the pair is used. A build that fails draws Nearest rather than nothing.
+    fn useFilters(self: *Rasterizer) void {
+        const want: pipelines.Filters = .{ .texture = self.texture_filter, .sprite = self.sprite_filter };
+        const pool = objc.Pool.push();
+        defer pool.pop();
+        self.pipelines.useFilters(want) catch |err| {
+            std.log.err("texture filter pipelines failed to build ({s}); drawing Nearest", .{@errorName(err)});
+            self.filters = .{};
+            return;
+        };
+        self.filters = want;
     }
 
     fn resetFrame(self: *Rasterizer) void {
@@ -298,7 +317,7 @@ pub const Rasterizer = struct {
             .draw => |d| {
                 if (d.start == d.end) continue;
                 const pipeline = switch (d.kind) {
-                    .prim => |v| self.pipelines.prim(self.dither_mode == .true_color, v),
+                    .prim => |v| self.pipelines.prim(self.dither_mode == .true_color, v, self.filters),
                     .fill => self.pipelines.fill,
                     .upload => self.pipelines.upload,
                     .copy => self.pipelines.copy,
@@ -361,8 +380,6 @@ pub const Rasterizer = struct {
             const uni: pi.Uniforms = .{
                 .scale = r.vram.scale,
                 .dither_mode = @backingInt(r.dither_mode),
-                .texture_filter = @backingInt(r.texture_filter),
-                .sprite_filter = @backingInt(r.sprite_filter),
             };
             e.setVertexBytes(std.mem.asBytes(&uni), 2);
             e.setFragmentBytes(std.mem.asBytes(&uni), 2);
@@ -497,7 +514,7 @@ pub const Rasterizer = struct {
             .kind = inst.kind,
             .reads_dst = inst.flags & (Flag.transparent | Flag.check_mask | Flag.depth_test) != 0 or
                 self.vram.depth_persists or
-                (textured and (self.texture_filter != .nearest or self.sprite_filter != .nearest)),
+                (textured and (self.filters.texture != .nearest or self.filters.sprite != .nearest)),
         };
         const i = self.instances.items.len;
         self.pushInstance(inst);

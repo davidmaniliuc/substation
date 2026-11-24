@@ -161,7 +161,7 @@ enum {
     PS1_DITHER_TRUE_COLOR = 3
 };
 
-/* Texture filtering (Ps1RasterUniforms.texture_filter and .sprite_filter).
+/* Texture filtering (the PS1_FC_TEXTURE_FILTER and PS1_FC_SPRITE_FILTER constants).
  * DISPLAY-ONLY: a filtered colour reaches the true-colour sidecar and never
  * VRAM, and VRAM's value, STP bit and depth stay on the nearest texel, so no
  * gate can see either setting. Which of the two a primitive follows is
@@ -186,18 +186,18 @@ enum {
     PS1_FILTER_MMPX_ADVANCED = 11
 };
 
-/* Per-DRAW state that is not per-primitive: the internal resolution, the
- * dither mode and the two texture filters. Bound at buffer index 2 for BOTH
- * stages (index 0 is the instance buffer, index 1 the upload payload).
+/* Per-DRAW state that is not per-primitive: the internal resolution and the
+ * dither mode. Bound at buffer index 2 for BOTH stages (index 0 is the
+ * instance buffer, index 1 the upload payload).
  *
  * RUNTIME, not a function constant and not a build setting: one build then
  * runs the whole gate ladder, and the resolution and dither pickers both
- * change their uniform without rebuilding a pipeline. */
+ * change their uniform without rebuilding a pipeline. The two texture
+ * filters are the exception: they are function constants (Rasterizer.metal's
+ * PS1_FC_TEXTURE_FILTER and PS1_FC_SPRITE_FILTER). */
 typedef struct {
     unsigned int scale;          /* internal resolution, 1...8 */
     unsigned int dither_mode;    /* PS1_DITHER_* above */
-    unsigned int texture_filter; /* PS1_FILTER_*, for 3D primitives */
-    unsigned int sprite_filter;  /* PS1_FILTER_*, for sprites (ps1_is_sprite) */
 } Ps1RasterUniforms;
 
 #endif /* PS1_PRIM_INSTANCE_H */

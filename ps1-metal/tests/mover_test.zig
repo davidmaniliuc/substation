@@ -87,8 +87,6 @@ test "aTextureBoundAsAttachmentCanBeReadAtAnotherCoordinate" {
     const uni: pi.Uniforms = .{
         .scale = 1,
         .dither_mode = @backingInt(pi.DitherMode.off),
-        .texture_filter = @backingInt(pi.TextureFilter.nearest),
-        .sprite_filter = @backingInt(pi.TextureFilter.nearest),
     };
     enc.setVertexBytes(std.mem.asBytes(&uni), 2);
     enc.setFragmentBytes(std.mem.asBytes(&uni), 2);

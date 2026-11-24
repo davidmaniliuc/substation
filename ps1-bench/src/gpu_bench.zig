@@ -179,7 +179,7 @@ pub fn run(alloc: Allocator, io: Io, gpu: Metal, o: Options) ![]Result {
 }
 
 /// A rig at `scale` drawing with `config`'s settings.
-fn rig(alloc: Allocator, gpu: Metal, set: *const Set, scale: u32, config: Config) !*Rig {
+fn rig(alloc: Allocator, gpu: Metal, set: *Set, scale: u32, config: Config) !*Rig {
     const r = try Rig.create(alloc, gpu, .{ .scale = scale, .set = set });
     r.r.dither_mode = config.dither;
     r.r.texture_filter = config.filter;
@@ -229,7 +229,7 @@ fn nanosSince(io: Io, t0: Io.Timestamp) u64 {
     return @intCast(Io.Clock.now(.awake, io).nanoseconds - t0.nanoseconds);
 }
 
-fn measure(alloc: Allocator, io: Io, gpu: Metal, set: *const Set, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
+fn measure(alloc: Allocator, io: Io, gpu: Metal, set: *Set, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
     const frames = parsed.frames.len;
 
     // Synchronous pass: per-frame GPU and CPU cost.

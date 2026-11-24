@@ -12,14 +12,22 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 #define PS1_Q_UNIT       16
 #define PS1_Q_BIAS_SCALE 256
 
-static_assert(sizeof(Ps1RasterUniforms) == 16,
+static_assert(sizeof(Ps1RasterUniforms) == 8,
               "Ps1RasterUniforms layout changed: prim_instance.zig reads this header");
 
-/// The specialised primitive pipelines' two axes (`ps1-metal/src/pipelines.zig`'s
-/// `PrimVariant` table). Index 0 is reserved and unused; 3 is the next free.
-/// Only `ps1_prim_fragment_dst`/`_nodst` read them.
-constant int  PS1_FC_CLASS      [[function_constant(1)]];
-constant bool PS1_FC_TRUE_COLOR [[function_constant(2)]];
+/// The specialised primitive pipelines' axes (`ps1-metal/src/pipelines.zig`'s
+/// `PrimVariant` table, and the two filter settings). Index 0 is reserved and
+/// unused; 5 is the next free. Only `ps1_prim_fragment_dst`/`_nodst` read
+/// them.
+///
+/// The filters are constants, not uniforms, because the dispatch over twelve
+/// of them in every textured pipeline cost Nearest 15-75% of its GPU time: a
+/// constant folds `ps1_filter` to the one filter in use, and Nearest to none.
+/// A setting change rebuilds the textured pipelines instead.
+constant int  PS1_FC_CLASS          [[function_constant(1)]];
+constant bool PS1_FC_TRUE_COLOR     [[function_constant(2)]];
+constant uint PS1_FC_TEXTURE_FILTER [[function_constant(3)]];
+constant uint PS1_FC_SPRITE_FILTER  [[function_constant(4)]];
 
 /// The three colour attachments every fragment in this file writes.
 ///
@@ -405,9 +413,8 @@ inline bool ps1_is_sprite(const device Ps1PrimInstance& p) {
 }
 
 /// The PS1_FILTER_* this primitive's sidecar uses.
-inline uint ps1_filter_for(const device Ps1PrimInstance& p,
-                           constant Ps1RasterUniforms& uni) {
-    return ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter;
+inline uint ps1_filter_for(const device Ps1PrimInstance& p) {
+    return ps1_is_sprite(p) ? PS1_FC_SPRITE_FILTER : PS1_FC_TEXTURE_FILTER;
 }
 
 /// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
@@ -551,7 +558,7 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         shade = ps1_pack(sr, sg, sb);
         shade8 = ps1_pack8(sr, sg, sb);
 
-        tex_filter = ps1_filter_for(p, uni);
+        tex_filter = ps1_filter_for(p);
         if (tex_filter != PS1_FILTER_NEAREST) {
             coords = float2(ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6))) / 64.0;
             ul = ps1_uv_limit(p.u0, p.u1, p.u2, tu);
@@ -598,7 +605,7 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
                          ((p.color >> 10) & 0x1Fu) << 3);
         // The sprite filter samples at the subtexel CENTRE in the triangle's
         // six-bit units, unwrapped, so at 1x it lands on the texel centre.
-        tex_filter = ps1_filter_for(p, uni);
+        tex_filter = ps1_filter_for(p);
         if (tex_filter != PS1_FILTER_NEAREST) {
             coords = float2(((2 * px + 1) * 64) / (2 * s) - 64 * p.x0 + 64 * p.u0,
                             ((2 * py + 1) * 64) / (2 * s) - 64 * p.y0 + 64 * p.v0) / 64.0;

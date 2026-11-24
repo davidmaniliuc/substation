@@ -147,7 +147,7 @@ pub const LiveRenderer = struct {
 
     /// On the heap, because the rasterizer holds a pointer to the VRAM.
     /// `set` is borrowed and must outlive the renderer.
-    pub fn init(alloc: Allocator, m: Metal, set: *const pipelines.Set, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
+    pub fn init(alloc: Allocator, m: Metal, set: *pipelines.Set, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
         const self = try alloc.create(LiveRenderer);
         errdefer alloc.destroy(self);
         self.* = .{ .alloc = alloc, .options = o, .vram = undefined, .rasterizer = undefined, .captures = undefined };

@@ -146,16 +146,14 @@ test "theInstanceRecordLayoutIsWhatTheShaderAsserts" {
     try std.testing.expectEqual(4 * 53, @offsetOf(prim.PrimInstance, "iz2"));
 }
 
-test "theRasterUniformIsSixteenBytesOnBothSides" {
-    // Rasterizer.metal: static_assert(sizeof(Ps1RasterUniforms) == 16). A field
-    // added on one side only shears scale, dither_mode, texture_filter and
-    // sprite_filter against each other, and the symptom would be "scale 1
-    // renders at scale 0", i.e. nothing drawn at all.
-    try std.testing.expectEqual(16, @sizeOf(prim.Uniforms));
+test "theRasterUniformIsEightBytesOnBothSides" {
+    // Rasterizer.metal: static_assert(sizeof(Ps1RasterUniforms) == 8). A field
+    // added on one side only shears scale and dither_mode against each other,
+    // and the symptom would be "scale 1 renders at scale 0", i.e. nothing
+    // drawn at all.
+    try std.testing.expectEqual(8, @sizeOf(prim.Uniforms));
     try std.testing.expectEqual(0, @offsetOf(prim.Uniforms, "scale"));
     try std.testing.expectEqual(4, @offsetOf(prim.Uniforms, "dither_mode"));
-    try std.testing.expectEqual(8, @offsetOf(prim.Uniforms, "texture_filter"));
-    try std.testing.expectEqual(12, @offsetOf(prim.Uniforms, "sprite_filter"));
 }
 
 test "theConstantsAreTheHeadersValues" {

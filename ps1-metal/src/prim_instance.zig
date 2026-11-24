@@ -104,7 +104,7 @@ pub const VramRect = struct {
 comptime {
     std.debug.assert(@sizeOf(PrimInstance) == 4 * 54);
     std.debug.assert(@alignOf(PrimInstance) == 4);
-    std.debug.assert(@sizeOf(Uniforms) == 16);
+    std.debug.assert(@sizeOf(Uniforms) == 8);
     std.debug.assert(@offsetOf(PrimInstance, "kind") == 0);
     std.debug.assert(@offsetOf(PrimInstance, "qx0") == 4 * 11);
     std.debug.assert(@offsetOf(PrimInstance, "rw0") == 4 * 48);

@@ -826,8 +826,9 @@ software rasterizer. The gate for it is
 `theCorpusRendersIdenticalVramUnderEverySetting`: every fixture, every frame,
 byte-identical VRAM with every filter id on each class. `harness.replay` pins
 `.nearest`, as it pins `.native`, so Gate 1 never inherits a player default.
-The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`)
-and rebuilds nothing (`theFiltersReachTheRasterizerWithoutARebuild`).
+The setting rebuilds no VRAM (`theFiltersReachTheRasterizerWithoutARebuild`);
+since the twelve filters landed it is a function constant, not a uniform (see
+"Filters are function constants" below).
 
 **`u6 >> 6` is the nearest texel, taken at the CORNER.** `ps1_interp_attr` is
 fed `u0 << 6` (and `v`), giving `u6` with six fractional bits; `u6 >> 6`
@@ -929,7 +930,9 @@ this was measured; rectangles join them under the 2026-10-03 section).
 `coords` in texels with the centre at +0.5 (`float2(u6, v6) / 64`), reading
 texels only through `ps1_src_raw`/`ps1_src_rgba` (limits, `& 0xFF`, window,
 CLUT). It returns the colour in 1/8 of a five-bit step (`t8`), a coverage `a`
-and an STP bit; `ps1_filter` dispatches on the id. The ports live in
+and an STP bit; `ps1_filter` dispatches on the id. A port returns through
+`ps1_filtered_of`, which clamps `a` to 0..1 for all of them: JINC2's ringing
+pushed it past 1 and `ps1_cover` extrapolated yellow pixels beside holes. The ports live in
 `shaders/filters/`, one header each, every header in `build.zig`'s
 `metal_headers`. Bilinear keeps its integer arithmetic.
 
@@ -972,12 +975,47 @@ this work, where "bilinear" was id 1):
 
 Filtered draws cost 5-24% more than the old bilinear: every textured draw now
 takes the reading variant, and the measurement does not separate that from
-the larger shader. Nearest is flat on Silent Hill and tr1; Crash at 6x read
-3-7% slower across three runs (6.88, 7.07 against 6.45), and an interleaved
-A/B was too thermally noisy to settle it. The suspect, unmeasured, is the
-filter dispatch compiled into every textured pipeline although the filter is
-a runtime uniform; a function constant per filter is the remedy to try
-once the ports land and make the shader larger still.
+the larger shader. This table predates the twelve ports and the function
+constants below; Nearest's columns no longer hold.
+
+**Filters are function constants, and that is worth 15-75% of Nearest's GPU
+time.** With all twelve filters behind a runtime `switch`, every textured
+pipeline carried every port's code: on 2026-11-24, interleaved best-of-5
+against `1d3f41c` (true colour, both filters nearest, GPU ms at 1x / 4x / 6x),
+Crash read 0.92-0.95 / 6.27-6.92 / 14.9-15.1 against 0.48-0.59 / 3.19-3.93 /
+10.4-11.5, Silent Hill 6x 14.8-16.1 against 12.6-13.0, and tr1 4x 1.23-1.31
+against 0.77-0.80. Register pressure from code that never runs, not work.
+`PS1_FC_TEXTURE_FILTER` (3) and `PS1_FC_SPRITE_FILTER` (4) now fold
+`ps1_filter` to the one filter in use, and Nearest to none; after the change
+Nearest beat `1d3f41c` itself (Crash 4x 2.67-3.27 against 3.40-3.85, Silent
+Hill 6x 10.2-10.7 against 11.2-12.4, tr1 4x 0.51-0.54 against 0.68-0.74),
+because the base already compiled Bilinear into every textured pipeline.
+`Ps1RasterUniforms` went back to 8 bytes (scale and dither mode).
+
+How it is built (`pipelines.zig`): the 28 pipelines `init` builds sample
+Nearest. A filtered TABLE (true colour x reads-dst, four pipelines) exists
+per textured class: a textured triangle's per [texture][sprite] pair, since
+`ps1_is_sprite` picks per primitive, and a textured rectangle's per sprite
+filter alone, since it is always a sprite. `Set.useFilters` builds a missing
+table, and the rasterizer calls it in `beginFrame` and FIXES the pair for the
+frame (`Rasterizer.filters`), so every draw of a frame finds a pipeline that
+exists and `readsDst` agrees with it. A failed build logs and draws Nearest.
+The cost is a cold compile on the render thread the first time a pair is
+used, which is DuckStation's model too; Metal's disk cache makes it cheap
+afterwards. `aFilterPairIsBuiltOnceAndNearestBuildsNone` pins the shape.
+The same change halved the device allocation `replayingTheCorpusThreeTimes`
+reads (34 MB to 17.4 MB in the full suite).
+
+Filtered GPU ms after it (same session, true colour, sprite nearest, 1x / 4x
+/ 6x): bilinear-no-edge Crash 1.12 / 5.09 / 13.50, Silent Hill 1.17 / 5.19 /
+13.70, tr1 0.32 / 0.75 / 1.51 (the base's bilinear: 0.78 / 4.25 / 11.90,
+1.12 / 4.81 / 13.12, 0.12 / 0.75 / 1.66); xBR 3.53 / 14.93 / 30.53, 4.10 /
+20.82 / 39.93, 0.49 / 1.57 / 3.09; MMPX Advanced 3.61 / 17.70 / 36.86, 3.85
+/ 19.54 / 39.00, 0.53 / 1.63 / 3.31. xBR and MMPX Advanced do not hold 60 fps
+at 6x on Crash or Silent Hill on an M1; that is the filters' own cost, and
+the remedy is the player's internal resolution. One full MMPX Advanced run
+stalled for over 15 minutes in `waitUntilCompleted` and did not reproduce on
+rerun; the cause is unknown.
 
 **A port's tests** go in `tests/filters/<name>_test.zig` and draw through
 `filter_harness.filterGrid`: a texel grid as a 1:1 rectangle or magnified
@@ -988,9 +1026,10 @@ read back per subtexel.
 
 **There are two filter settings, and the class of a primitive chooses only
 WHICH applies.** "Texture Filtering" and "Sprite Texture Filtering" are the
-one `TextureFilter` enum (`texture_filter` / `sprite_filter` in
-`Ps1RasterUniforms`, now 16 bytes), and `ps1_filter_for` is
-`ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter`. The class never
+one `TextureFilter` enum (`PS1_FC_TEXTURE_FILTER` / `PS1_FC_SPRITE_FILTER`,
+function constants since 2026-11-24; uniforms until then), and
+`ps1_filter_for` is `ps1_is_sprite(p) ? PS1_FC_SPRITE_FILTER :
+PS1_FC_TEXTURE_FILTER`. The class never
 changes what a filter does, so everything above carries over unchanged:
 sidecar-only, VRAM and STP from the nearest texel, VRAM byte-identical.
 `theCorpusRendersIdenticalVramUnderEverySetting` is the gate, every filter
