@@ -963,21 +963,6 @@ corner is in the hole but whose centre has crossed back into a texel is the
 only one covered: it needs a non-integer texel-to-pixel ratio. The filters
 that grow a silhouette (xBR, Scale2x/3x, MMPX) are what the hole path is for.
 
-**Cost, measured** (`ps1-bench-gpu`, M1, true colour, sprite filter
-nearest, best of 5, GPU ms at 1x / 4x / 6x; "before" is the commit ahead of
-this work, where "bilinear" was id 1):
-
-| fixture | nearest before | nearest after | bilinear before | no-edge after | edge after |
-|---|---|---|---|---|---|
-| crash-bandicoot-warped | 0.48 / 3.11 / 6.45 | 0.55 / 3.23 / 7.07 | 0.83 / 4.29 / 9.98 | 1.17 / 5.33 / 11.19 | 1.15 / 5.16 / 11.36 |
-| silent-hill-usa | 0.96 / 3.82 / 8.48 | 0.93 / 3.85 / 8.38 | 0.99 / 4.81 / 10.88 | 1.21 / 5.19 / 11.43 | 1.23 / 5.22 / 11.50 |
-| tr1-usa-v1-1 | 0.11 / 0.51 / 1.14 | 0.11 / 0.52 / 1.11 | 0.11 / 0.68 / 1.53 | 0.33 / 0.81 / 1.71 | 0.33 / 0.81 / 1.73 |
-
-Filtered draws cost 5-24% more than the old bilinear: every textured draw now
-takes the reading variant, and the measurement does not separate that from
-the larger shader. This table predates the twelve ports and the function
-constants below; Nearest's columns no longer hold.
-
 **Filters are function constants, and that is worth 15-75% of Nearest's GPU
 time.** With all twelve filters behind a runtime `switch`, every textured
 pipeline carried every port's code: on 2026-11-24, interleaved best-of-5
@@ -996,13 +981,31 @@ How it is built (`pipelines.zig`): the 28 pipelines `init` builds sample
 Nearest. A filtered TABLE (true colour x reads-dst, four pipelines) exists
 per textured class: a textured triangle's per [texture][sprite] pair, since
 `ps1_is_sprite` picks per primitive, and a textured rectangle's per sprite
-filter alone, since it is always a sprite. `Set.useFilters` builds a missing
-table, and the rasterizer calls it in `beginFrame` and FIXES the pair for the
-frame (`Rasterizer.filters`), so every draw of a frame finds a pipeline that
-exists and `readsDst` agrees with it. A failed build logs and draws Nearest.
-The cost is a cold compile on the render thread the first time a pair is
-used, which is DuckStation's model too; Metal's disk cache makes it cheap
-afterwards. `aFilterPairIsBuiltOnceAndNearestBuildsNone` pins the shape.
+filter alone, since it is always a sprite. The rasterizer FIXES the pair for
+the frame in `beginFrame` (`Rasterizer.filters`), so every draw of a frame
+finds a pipeline that exists and `readsDst` agrees with it. A failed build
+logs and draws Nearest. `aFilterPairIsBuiltOnceAndNearestBuildsNone` pins
+the shape.
+
+**A new pair is built on a background thread, and the live path does not
+wait for it.** A COLD build of one filter's table is **4.5-9.2 s** on an M1
+(measured 2026-11-24, every filter; Scale2x the slowest), warm 0-3 ms, and
+Metal's cache is keyed on the library, so every release that changes the
+shaders pays it again. Built synchronously in `beginFrame` that froze the
+picture for seconds the first time a player picked a filter. Now
+`Set.request` reports whether the pair's tables are ready and, if not and no
+build is running, starts ONE builder thread (`buildPair`; a request for
+another pair meanwhile waits for a later frame). Each table is a `Slot` whose
+`state` the builder stores `.ready` (release) after writing `table`; nothing
+reads `table` without an acquire load seeing `.ready`. The live rasterizer
+(`wait_for_filters = false`, set by `LiveRenderer` and carried across a
+rebuild with `filters` itself) keeps drawing its previous pair until the new
+one is ready. Everything else (Gate 1, the filter tests, `ps1-bench-gpu`,
+whose pipelined mode is also `synchronous = false`) keeps the default `true`
+and blocks in `Set.useFilters`, so its first frame draws the filter it was
+given. `Set.deinit` joins the builder. Pinned by
+`aRequestBuildsInTheBackground` and
+`aLiveRasterizerKeepsItsPairUntilTheNewOneIsBuilt`.
 The same change halved the device allocation `replayingTheCorpusThreeTimes`
 reads (34 MB to 17.4 MB in the full suite).
 

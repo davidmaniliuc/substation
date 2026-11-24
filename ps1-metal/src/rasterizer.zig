@@ -129,6 +129,11 @@ pub const Rasterizer = struct {
     /// The two settings as this frame draws them, fixed at `beginFrame` so
     /// every draw in the frame picks a pipeline that exists.
     filters: pipelines.Filters = .{},
+    /// Whether `beginFrame` waits for a newly chosen pair's pipelines. True
+    /// for the fixture gates and the benchmark; false on the live path,
+    /// where a cold build takes seconds and the frames go on drawing the
+    /// previous pair until it is ready.
+    wait_for_filters: bool = true,
 
     /// Whether `endFrame` blocks until the GPU has finished. True for every
     /// fixture gate, which reads VRAM back the instant `endFrame` returns.
@@ -255,18 +260,24 @@ pub const Rasterizer = struct {
         }
     }
 
-    /// Fixes this frame's filters, building their pipelines the first time
-    /// the pair is used. A build that fails draws Nearest rather than nothing.
+    /// Fixes this frame's filters. A pair is drawn only once its pipelines
+    /// exist: `wait_for_filters` blocks for them, the live path keeps the
+    /// previous pair until they are ready. A failed build draws Nearest
+    /// rather than nothing.
     fn useFilters(self: *Rasterizer) void {
         const want: pipelines.Filters = .{ .texture = self.texture_filter, .sprite = self.sprite_filter };
+        if (std.meta.eql(want, self.filters)) return;
         const pool = objc.Pool.push();
         defer pool.pop();
-        self.pipelines.useFilters(want) catch |err| {
-            std.log.err("texture filter pipelines failed to build ({s}); drawing Nearest", .{@errorName(err)});
-            self.filters = .{};
-            return;
-        };
-        self.filters = want;
+        if (self.wait_for_filters) {
+            self.pipelines.useFilters(want) catch {
+                self.filters = .{};
+                return;
+            };
+            self.filters = want;
+        } else if (self.pipelines.request(want)) |ready| {
+            if (ready) self.filters = want;
+        } else |_| self.filters = .{};
     }
 
     fn resetFrame(self: *Rasterizer) void {

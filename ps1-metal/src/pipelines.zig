@@ -9,8 +9,11 @@
 //! Those 28 sample Nearest. The texture filters are function constants too
 //! (compiling all twelve into every textured pipeline cost Nearest 15-75% of
 //! its GPU time), so a filtered table of the two textured classes is built
-//! the first time its pair of filters is drawn with, and kept: the cold
-//! build is paid once per pair, when the player changes the setting.
+//! the first time its pair of filters is drawn with, and kept. A cold build
+//! takes 4.5-9 s per filter on an M1 (Metal's disk cache makes it 0-3 ms
+//! after), so the live path builds on a background thread (`request`) and
+//! draws with a pair that is ready meanwhile; the fixture gates block on it
+//! (`useFilters`).
 
 const std = @import("std");
 const objc = @import("objc.zig");
@@ -44,6 +47,20 @@ const filter_count = @typeInfo(pi.TextureFilter).@"enum".field_names.len;
 /// [true colour][reads dst].
 const Table = [2][2]mtl.RenderPipelineState;
 
+/// A filtered table and how far its build has got. `table` is written by the
+/// builder thread before it stores `.ready` (release), and read only after a
+/// `.ready` load (acquire).
+const Slot = struct {
+    state: std.atomic.Value(State) = .init(.absent),
+    table: Table = undefined,
+
+    const State = enum(u8) { absent, building, ready, failed };
+
+    fn release(self: *Slot) void {
+        if (self.state.load(.acquire) == .ready) releaseTable(&self.table);
+    }
+};
+
 /// The two filter settings a textured pipeline is built for.
 pub const Filters = struct {
     texture: pi.TextureFilter = .nearest,
@@ -68,12 +85,17 @@ pub const Filters = struct {
 pub const Set = struct {
     /// [true colour][class][reads dst], every texture sampled Nearest.
     prims: [2][class_count][2]mtl.RenderPipelineState,
-    /// The filtered tables, built by `useFilters`: a textured triangle's by
+    /// The filtered tables, built by `request`: a textured triangle's by
     /// [texture][sprite] filter, a textured rectangle's by sprite filter.
-    /// The Nearest entries stay null; `prims` holds them.
-    tris: [filter_count][filter_count]?Table = @splat(@splat(null)),
-    rects: [filter_count]?Table = @splat(null),
-    /// What `useFilters` needs to build a table later.
+    /// The Nearest entries stay absent; `prims` holds them.
+    tris: [filter_count][filter_count]Slot = @splat(@splat(.{})),
+    rects: [filter_count]Slot = @splat(.{}),
+    /// The one background build, if any has been started; `busy` while it
+    /// runs. One build at a time: a request for another pair waits for the
+    /// next frame rather than a second compiler thread.
+    builder: ?std.Thread = null,
+    busy: std.atomic.Value(bool) = .init(false),
+    /// What a build needs to make a table later.
     device: mtl.Device,
     lib: mtl.Library,
     fill: mtl.RenderPipelineState,
@@ -124,9 +146,10 @@ pub const Set = struct {
     }
 
     pub fn deinit(self: *Set) void {
+        if (self.builder) |t| t.join();
         for (&self.prims) |*table| for (table) |*pair| for (pair) |p| p.release();
-        for (&self.tris) |*row| for (row) |*t| if (t.*) |*table| releaseTable(table);
-        for (&self.rects) |*t| if (t.*) |*table| releaseTable(table);
+        for (&self.tris) |*row| for (row) |*s| s.release();
+        for (&self.rects) |*s| s.release();
         self.fill.release();
         self.upload.release();
         self.copy.release();
@@ -136,31 +159,85 @@ pub const Set = struct {
         self.* = undefined;
     }
 
-    /// The pipeline for `v` under `f`, whose tables `useFilters(f)` built.
+    /// The pipeline for `v` under `f`, whose tables `request(f)` reported ready.
     pub fn prim(self: *const Set, true_colour: bool, v: PrimVariant, f: Filters) mtl.RenderPipelineState {
         const tc = @intFromBool(true_colour);
         const dst = @intFromBool(v.reads_dst);
         const own = f.of(v.kind);
         if (own.nearest()) return self.prims[tc][@intCast(v.kind)][dst];
-        return self.slot(v.kind, own).*.?[tc][dst];
+        const s = self.slot(v.kind, own);
+        std.debug.assert(s.state.load(.acquire) == .ready);
+        return s.table[tc][dst];
     }
 
-    /// Builds whichever of `f`'s two filtered tables does not exist yet.
-    /// A cold build compiles four large fragment functions per table, so it
-    /// belongs between frames, never inside an encoder. Needs an enclosing
-    /// pool, as `init` does.
-    pub fn useFilters(self: *Set, f: Filters) !void {
-        for ([_]i32{ pi.Kind.textured_tri, pi.Kind.textured_rect }) |kind| {
+    /// Whether `f`'s filtered tables are all built. If one is not and no
+    /// build is running, starts one on a background thread; the caller draws
+    /// with a pair that is ready and asks again next frame.
+    /// `error.FilterBuildFailed` once a build of one of them has failed.
+    pub fn request(self: *Set, f: Filters) error{FilterBuildFailed}!bool {
+        var all_ready = true;
+        for (textured_kinds) |kind| {
             const own = f.of(kind);
             if (own.nearest()) continue;
-            const t = self.slot(kind, own);
-            if (t.* == null) t.* = try self.buildTable(kind, own);
+            switch (self.slot(kind, own).state.load(.acquire)) {
+                .ready => {},
+                .failed => return error.FilterBuildFailed,
+                .absent, .building => all_ready = false,
+            }
+        }
+        if (all_ready) return true;
+        if (self.busy.load(.acquire)) return false;
+        // The last build has stored its states, so this join waits only for
+        // its thread to return.
+        if (self.builder) |t| t.join();
+        self.builder = null;
+        for (textured_kinds) |kind| {
+            const own = f.of(kind);
+            if (own.nearest()) continue;
+            const s = self.slot(kind, own);
+            if (s.state.load(.acquire) == .absent) s.state.store(.building, .release);
+        }
+        self.busy.store(true, .release);
+        self.builder = std.Thread.spawn(.{}, buildPair, .{ self, f }) catch blk: {
+            buildPair(self, f);
+            break :blk null;
+        };
+        return false;
+    }
+
+    /// `request`, then waits for the build. For the fixture gates and the
+    /// benchmark, whose first frame must draw the filter it was given.
+    pub fn useFilters(self: *Set, f: Filters) error{FilterBuildFailed}!void {
+        while (!try self.request(f)) {
+            if (self.builder) |t| t.join();
+            self.builder = null;
         }
     }
 
+    /// The builder thread: every table of `f` that `request` marked
+    /// `.building`.
+    fn buildPair(self: *Set, f: Filters) void {
+        const pool = objc.Pool.push();
+        defer pool.pop();
+        for (textured_kinds) |kind| {
+            const own = f.of(kind);
+            if (own.nearest()) continue;
+            const s = self.slot(kind, own);
+            if (s.state.load(.acquire) != .building) continue;
+            if (self.buildTable(kind, own)) |table| {
+                s.table = table;
+                s.state.store(.ready, .release);
+            } else |err| {
+                std.log.err("texture filter pipelines failed to build ({s})", .{@errorName(err)});
+                s.state.store(.failed, .release);
+            }
+        }
+        self.busy.store(false, .release);
+    }
+
     fn slot(self: anytype, kind: i32, f: Filters) switch (@TypeOf(self)) {
-        *Set => *?Table,
-        else => *const ?Table,
+        *Set => *Slot,
+        else => *const Slot,
     } {
         return if (kind == pi.Kind.textured_rect)
             &self.rects[@backingInt(f.sprite)]
@@ -188,6 +265,8 @@ pub const Set = struct {
         return 2 * class_count * 2;
     }
 };
+
+const textured_kinds = [_]i32{ pi.Kind.textured_tri, pi.Kind.textured_rect };
 
 fn releaseTable(t: *Table) void {
     for (t) |pair| for (pair) |p| p.release();

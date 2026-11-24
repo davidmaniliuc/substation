@@ -160,6 +160,7 @@ pub const LiveRenderer = struct {
         // rasterizer's writes before its sampling. Blocking the draw callback
         // on the GPU would cost a frame for nothing.
         self.rasterizer.synchronous = false;
+        self.rasterizer.wait_for_filters = false;
         return self;
     }
 
@@ -194,7 +195,9 @@ pub const LiveRenderer = struct {
         self.rasterizer.dither_mode = old.dither_mode;
         self.rasterizer.texture_filter = old.texture_filter;
         self.rasterizer.sprite_filter = old.sprite_filter;
+        self.rasterizer.filters = old.filters;
         self.rasterizer.synchronous = old.synchronous;
+        self.rasterizer.wait_for_filters = old.wait_for_filters;
         self.rasterizer.on_commit = old.on_commit;
         self.pending_restore = null;
         self.present_display = null;

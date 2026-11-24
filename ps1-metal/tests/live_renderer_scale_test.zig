@@ -371,8 +371,8 @@ test "Pipelines: aFilterPairIsBuiltOnceAndNearestBuildsNone" {
 
     const none: pipelines.Filters = .{};
     try set.useFilters(none);
-    for (set.tris) |row| for (row) |t| try expect(t == null);
-    for (set.rects) |t| try expect(t == null);
+    for (set.tris) |row| for (row) |t| try expect(t.state.load(.acquire) == .absent);
+    for (set.rects) |t| try expect(t.state.load(.acquire) == .absent);
 
     const xbr: pipelines.Filters = .{ .texture = .xbr };
     try set.useFilters(xbr);
@@ -384,8 +384,54 @@ test "Pipelines: aFilterPairIsBuiltOnceAndNearestBuildsNone" {
     // A rectangle is always a sprite, and the sprite filter is still Nearest.
     try expectEqual(set.prim(true, rect, none).id, set.prim(true, rect, xbr).id);
     try expectEqual(set.prim(true, flat, none).id, set.prim(true, flat, xbr).id);
-    for (set.rects) |t| try expect(t == null);
+    for (set.rects) |t| try expect(t.state.load(.acquire) == .absent);
 
     try set.useFilters(xbr);
     try expectEqual(built, set.prim(true, tri, xbr).id);
+}
+
+// A cold build of one pair takes seconds, so `request` starts it on another
+// thread and returns at once; the pair is drawable only once it reports
+// ready.
+test "Pipelines: aRequestBuildsInTheBackground" {
+    const pipelines = ps1_metal.pipelines;
+    const m = try harness.metal();
+    defer m.deinit();
+    var set = try lh.pipelineSet(m);
+    defer set.deinit();
+    const pool = ps1_metal.objc.Pool.push();
+    defer pool.pop();
+
+    const jinc2: pipelines.Filters = .{ .texture = .jinc2, .sprite = .jinc2 };
+    try expect(try set.request(.{}));
+    try expect(!try set.request(jinc2));
+    try set.useFilters(jinc2);
+    try expect(try set.request(jinc2));
+    try expect(set.tris[@backingInt(jinc2.texture)][@backingInt(jinc2.sprite)].state.load(.acquire) == .ready);
+    try expect(set.rects[@backingInt(jinc2.sprite)].state.load(.acquire) == .ready);
+}
+
+// On the live path a new pair is not waited for: the frames go on drawing
+// the pair they had until its pipelines are ready, then switch.
+test "Pipelines: aLiveRasterizerKeepsItsPairUntilTheNewOneIsBuilt" {
+    const pipelines = ps1_metal.pipelines;
+    const m = try harness.metal();
+    defer m.deinit();
+    var vram = try ps1_metal.metal_vram.MetalVram.init(alloc, m.device, m.queue, 1, false);
+    defer vram.deinit();
+    var set = try lh.pipelineSet(m);
+    defer set.deinit();
+    var r = try ps1_metal.rasterizer.Rasterizer.init(alloc, &vram, &set);
+    defer r.deinit();
+    r.wait_for_filters = false;
+
+    r.texture_filter = .mmpx;
+    r.beginFrame(&.{});
+    r.endFrame();
+    try expect(std.meta.eql(r.filters, pipelines.Filters{}));
+
+    try set.useFilters(.{ .texture = .mmpx });
+    r.beginFrame(&.{});
+    r.endFrame();
+    try expect(std.meta.eql(r.filters, pipelines.Filters{ .texture = .mmpx }));
 }
