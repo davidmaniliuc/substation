@@ -817,14 +817,14 @@ test process saw no environment; that constraint left with it.)
 
 ## Texture filtering (2026-10-02)
 
-**Bilinear filtering is SIDECAR-ONLY.** VRAM, the hole (raw texel 0 discards)
-and the STP bit are all decided by the NEAREST texel exactly as before; the
-filtered colour reaches `color(1)` alone. That is forced by the same three
-gates that shaped the sidecar: a filtered colour is not a value the console
-can produce, and Gate 1, Gate 2 and `PS1_LIVE_DIFF` all need VRAM bit-exact
-against the software rasterizer. The gate for it is
-`theCorpusRendersIdenticalVramUnderBothFilters`: every fixture, every frame,
-byte-identical VRAM under both filters. `harness.replay` pins
+**Texture filtering is SIDECAR-ONLY.** VRAM, its STP bit and the depth are
+all decided by the NEAREST texel exactly as before; the filtered colour
+reaches `color(1)` alone. That is forced by the same three gates that shaped
+the sidecar: a filtered colour is not a value the console can produce, and
+Gate 1, Gate 2 and `PS1_LIVE_DIFF` all need VRAM bit-exact against the
+software rasterizer. The gate for it is
+`theCorpusRendersIdenticalVramUnderEverySetting`: every fixture, every frame,
+byte-identical VRAM with every filter id on each class. `harness.replay` pins
 `.nearest`, as it pins `.native`, so Gate 1 never inherits a player default.
 The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`)
 and rebuilds nothing (`theFiltersReachTheRasterizerWithoutARebuild`).
@@ -875,10 +875,9 @@ weigh. `uvLimitsKeepAtlasNeighboursOut` has red on both sides of a cell, at
 1x magnified and 1:1 at 4x and 8x.
 
 **A hole has weight zero and the remaining weights renormalise.** Filtering it
-as black draws a dark fringe around every cut-out. The weight sum CAN be zero:
-under minification the centre need not neighbour the nearest texel, and all
-four may be holes or limited onto one. There `T` is the nearest texel's
-`t5 << 3`, which is never a hole (the fragment would already have discarded).
+as black draws a dark fringe around every cut-out. The non-hole weight, out
+of 64 * 64, is the filter's coverage `a` (see the edge rule below); it is 0
+where all four taps are holes or limited onto one.
 
 **The filtered texel `T` is per channel in 1/8 of a five-bit step (0..248)**,
 and every sidecar formula reduces to today's value at `T == t5 << 3`. That
@@ -897,14 +896,10 @@ semi-transparent filtered draw blends `side5`
 UNFILTERED composite; `.trueColor` takes the filtered `src8` into
 `ps1_blend8` unchanged.
 
-**Scope.** Textured TRIANGLES only; rectangles stay nearest. (Superseded by
-the 2026-10-03 section below: rectangles now filter under their own Sprite
-setting, and the class of a primitive picks the setting.) Ships OFF. This
-is DuckStation's "Bilinear (No Edge Blending)" and the picker says so. Edge
-blending is possible and is the NEXT spec: at a hole pixel the fragment can
-write `dst` back to VRAM unchanged (exactly what a discard leaves) and still
-write a blended colour to the sidecar, so the gates still hold. The cost is that
-a cut-out edge stays nearest-pixel-shaped at 8x until then.
+**Scope.** Ships OFF. Rectangles filter under their own Sprite setting (the
+2026-10-03 section below). The twelve filters and the edge rule are the
+2026-11-24 section below; this one was "Bilinear (No Edge Blending)", id 1,
+which it keeps because the app persists the id.
 
 **Cost, measured (Gate 4, ms/frame over 100 frames, Debug build, second of two
 runs; the first is in brackets).**
@@ -927,6 +922,68 @@ figures sit with the sidecar and blend notes. The filter is a second fetch loop 
 fragment, so it costs in proportion to textured overdraw (triangles only when
 this was measured; rectangles join them under the 2026-10-03 section).
 
+## Twelve filters and the edge rule (2026-11-24)
+
+**Every filter is one function behind one interface** (`shaders/Filter.h`):
+`Ps1Filtered ps1_filter_<name>(thread const Ps1TexSrc& src, float2 coords)`,
+`coords` in texels with the centre at +0.5 (`float2(u6, v6) / 64`), reading
+texels only through `ps1_src_raw`/`ps1_src_rgba` (limits, `& 0xFF`, window,
+CLUT). It returns the colour in 1/8 of a five-bit step (`t8`), a coverage `a`
+and an STP bit; `ps1_filter` dispatches on the id. The ports live in
+`shaders/filters/`, one header each, every header in `build.zig`'s
+`metal_headers`. Bilinear keeps its integer arithmetic.
+
+**The edge rule, one code path for all eleven.** `ps1_filter_cover` turns
+`a` into the share of the pixel the filtered colour covers: 0 below one half;
+above it `a` for an edge-blending filter (Bilinear, JINC2, xBR:
+`ps1_filter_blends_edges`, one bit per id) and 1 for the rest. The sidecar
+is `ps1_cover(bg8, out8, cover)`, `bg8` the destination's sidecar (or its
+expansion), re-quantised to five bits in the dithering modes; at cover 1 it
+is the old value exactly. Where the nearest texel is present, VRAM, STP,
+transparency and depth are exactly as before. **Where it is a HOLE and the
+cover is not 0, the fragment writes VRAM and depth back unchanged and paints
+only the sidecar**, its transparency from the filtered STP: that is how xBR
+or MMPX reshape a sprite's silhouette while VRAM keeps the console's edge.
+Bilinear-no-edge changed in two places: a present texel whose coverage is
+under one half now shows the background in the sidecar (the old fallback to
+the nearest texel is gone), and a covered hole (below) is now painted.
+
+**Any filter takes the reading variant for every textured draw**
+(`appendPrim`): the mix reads `dst_side` and a covered hole writes `dst`
+back, and the `nodst` fragment passes zeros, so an opaque filtered draw
+there paints its covered holes BLACK in VRAM.
+`aCoveredHoleKeepsItsVramAndDepth` fails without that term.
+
+**Bilinear's coverage reaches a hole only on a sliver.** At a texel boundary
+the centre is at most half a subtexel past the corner, so a pixel whose
+corner is in the hole but whose centre has crossed back into a texel is the
+only one covered: it needs a non-integer texel-to-pixel ratio. The filters
+that grow a silhouette (xBR, Scale2x/3x, MMPX) are what the hole path is for.
+
+**Cost, measured** (`ps1-bench-gpu`, M1, true colour, sprite filter
+nearest, best of 5, GPU ms at 1x / 4x / 6x; "before" is the commit ahead of
+this work, where "bilinear" was id 1):
+
+| fixture | nearest before | nearest after | bilinear before | no-edge after | edge after |
+|---|---|---|---|---|---|
+| crash-bandicoot-warped | 0.48 / 3.11 / 6.45 | 0.55 / 3.23 / 7.07 | 0.83 / 4.29 / 9.98 | 1.17 / 5.33 / 11.19 | 1.15 / 5.16 / 11.36 |
+| silent-hill-usa | 0.96 / 3.82 / 8.48 | 0.93 / 3.85 / 8.38 | 0.99 / 4.81 / 10.88 | 1.21 / 5.19 / 11.43 | 1.23 / 5.22 / 11.50 |
+| tr1-usa-v1-1 | 0.11 / 0.51 / 1.14 | 0.11 / 0.52 / 1.11 | 0.11 / 0.68 / 1.53 | 0.33 / 0.81 / 1.71 | 0.33 / 0.81 / 1.73 |
+
+Filtered draws cost 5-24% more than the old bilinear: every textured draw now
+takes the reading variant, and the measurement does not separate that from
+the larger shader. Nearest is flat on Silent Hill and tr1; Crash at 6x read
+3-7% slower across three runs (6.88, 7.07 against 6.45), and an interleaved
+A/B was too thermally noisy to settle it. The suspect, unmeasured, is the
+filter dispatch compiled into every textured pipeline although the filter is
+a runtime uniform; a function constant per filter is the remedy to try
+once the ports land and make the shader larger still.
+
+**A port's tests** go in `tests/filters/<name>_test.zig` and draw through
+`filter_harness.filterGrid`: a texel grid as a 1:1 rectangle or magnified
+triangles, over a background, at any scale, both settings set to the filter,
+read back per subtexel.
+
 ## Sprite texture filtering (2026-10-03)
 
 **There are two filter settings, and the class of a primitive chooses only
@@ -935,9 +992,9 @@ one `TextureFilter` enum (`texture_filter` / `sprite_filter` in
 `Ps1RasterUniforms`, now 16 bytes), and `ps1_filter_for` is
 `ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter`. The class never
 changes what a filter does, so everything above carries over unchanged:
-sidecar-only, the hole and STP from the nearest texel, VRAM byte-identical.
-`theCorpusRendersIdenticalVramUnderEverySetting` is the gate, all four
-combinations, and `MetalFixtureHarness.replay` pins BOTH to `.nearest`.
+sidecar-only, VRAM and STP from the nearest texel, VRAM byte-identical.
+`theCorpusRendersIdenticalVramUnderEverySetting` is the gate, every filter
+once on each setting, and `MetalFixtureHarness.replay` pins BOTH to `.nearest`.
 
 **`ps1_is_sprite` decides from the primitive's own instance fields.** A
 textured rectangle is always a sprite. A triangle with `rw != 0` on all three

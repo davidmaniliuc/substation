@@ -340,10 +340,11 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   real eight-bit colour, 0 means expand VRAM with `c << 3 | c >> 2`. Both
   expansions in the codebase must stay that one expression or an invalidated
   rect shows a seam.
-- **Texture filtering is SIDECAR-ONLY.** VRAM, the hole and the STP bit stay
+- **Texture filtering is SIDECAR-ONLY.** VRAM, the STP bit and the depth stay
   on the nearest texel taken at the CORNER sample point (`u6 >> 6`, the old
   interpolant bit for bit); the filter samples at the subtexel CENTRE and
-  touches `color(1)` alone.
+  touches `color(1)` alone. A hole the filter still covers writes VRAM and
+  depth back unchanged, so a filtered textured draw always reads `dst`.
   Whether a primitive follows Texture Filtering or Sprite Texture Filtering
   is `ps1_is_sprite`'s decision, made from its own vertices in the shader;
   it chooses only which setting applies.
