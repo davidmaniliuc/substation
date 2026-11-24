@@ -520,7 +520,7 @@ fn opCop(cpu: *Cpu, instr: Instruction, comptime cop_num: u2) void {
         },
         0x10...0x1F => {
             if (cop_num == 2) {
-                cpu.cop2.executeCommand(instr.raw, cpu.bus.pgxpConfig());
+                cpu.cop2.executeCommand(instr.raw, cpu.bus.pgxpConfig(), cpu.bus.widescreen);
             } else {
                 // For COP0, 0x10...0x1F are CO functions
                 const funct = instr.r.funct;

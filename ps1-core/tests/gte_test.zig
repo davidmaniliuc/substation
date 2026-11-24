@@ -203,6 +203,63 @@ test "GTE RTPS projects vertices closer than H (SZ3 < H)" {
     try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31) & (1 << 17));
 }
 
+fn sxy2Of(ctx: *const TestContext) [2]i16 {
+    const sxy2 = ctx.readData(14);
+    return .{ @bitCast(@as(u16, @truncate(sxy2))), @bitCast(@as(u16, @truncate(sxy2 >> 16))) };
+}
+
+// The widescreen hack narrows X about the screen offset, before the `>> 16`,
+// and leaves Y and the depth alone.
+test "GTE RTPS: widescreen narrows X about OFX and nothing else" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 256);
+    ctx.setCtrl(24, 160 << 16); // OFX = 160.0
+    ctx.setCtrl(25, 120 << 16); // OFY = 120.0
+    ctx.setData(0, @bitCast(ps1_core.cpu.Cop2.Point2D{ .x = -100, .y = -64 }));
+    ctx.setData(1, 256); // VZ0=256 -> H/SZ3 = 1
+
+    // h_s3z = divideUNR(256, 256) = 0x10000, so X = -100 and Y = -64 exactly.
+    ctx.execute(0x4A080001);
+    try expectEqual([2]i16{ 60, 56 }, sxy2Of(&ctx));
+
+    const cases = [_]struct { ws: ps1_core.widescreen.Widescreen, x: i16 }{
+        .{ .ws = .wide_16_10, .x = 160 - 84 }, // -100 * 5/6 = -83.3, floored by >> 16
+        .{ .ws = .wide_16_9, .x = 160 - 75 }, // -100 * 3/4
+        .{ .ws = .wide_21_9, .x = 160 - 58 }, // -100 * 4/7 = -57.1
+    };
+    for (cases) |c| {
+        ctx.bus.widescreen = c.ws;
+        ctx.cpu.pipeline.pc = 0;
+        ctx.cpu.pipeline.next_pc = 4;
+        ctx.execute(0x4A080001);
+        try expectEqual([2]i16{ c.x, 56 }, sxy2Of(&ctx));
+        try expectEqual(@as(u32, 256), ctx.readData(19)); // SZ3 untouched
+    }
+}
+
+// PGXP's float projection must narrow by the same ratio, or every resolved
+// vertex would sit outside the wire's pixel and be clamped back.
+test "GTE RTPS: the precise projection follows the widescreen X scale" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const cop2 = &ctx.cpu.cop2;
+    setupIdentityRtps(&ctx, 300);
+    cop2.writeCtrl(24, 160 << 16);
+    cop2.writeData(0, 101); // VX0 = 101, VY0 = 0
+    cop2.writeData(1, 700); // VZ0 = 700
+
+    cop2.executeCommand(0x4A18_0001, .{}, .wide_16_9); // RTPS, sf=1, lm=0
+
+    const p = cop2.readPreciseData(14);
+    try std.testing.expect(p.flags != 0);
+    const sx: i16 = @bitCast(@as(u16, @truncate(cop2.readData(14))));
+    // 101 * 300/700 * 3/4 + 160 = 192.46
+    try std.testing.expectApproxEqAbs(@as(f32, 192.464), p.x, 0.01);
+    try expectEqual(@as(f32, @floatFromInt(sx)), @floor(p.x));
+}
+
 // RTPS must compute the depth-cueing accumulator:
 //   MAC0 = (H/SZ3)*DQA + DQB ; IR0 = clamp(MAC0 >> 12, 0..1000h)
 // (Avocado opcodes.cpp:360-363). IR0 is the fog/blend factor consumed by
@@ -1326,7 +1383,7 @@ test "PGXP: RTPS keeps the sub-pixel screen position MAC0 carries" {
     cop2.writeData(0, 0x0000_0005); // VXY0: VX0 = 5, VY0 = 0
     cop2.writeData(1, 7); // VZ0 = 7
 
-    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}, .off); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14); // sxy2
 

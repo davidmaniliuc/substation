@@ -150,7 +150,7 @@ test "a saturated projection records no precise value" {
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 2000); // VXY0: VX0 = 2000, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}, .off); // RTPS, sf=1, lm=0
 
     // SX2 clamped to the top of the 11-bit range.
     try expectEqual(@as(u32, 1023), cop2.readData(14) & 0xFFFF);
@@ -169,7 +169,7 @@ test "an unsaturated projection records the sub-pixel the float projection compu
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}, .off); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags);
@@ -231,7 +231,7 @@ test "RTPS records a depth term of max(H/2, SZ3)" {
     var cop2 = Cop2.init();
     // vz = 2000, H = 1000, so SZ3 = 2000 and H/2 = 500: the depth is SZ3.
     stageProjection(&cop2, 16, 32, 2000, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, .{});
+    cop2.executeCommand(0x4A08_0001, .{}, .off);
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags & Value.valid_xyz);
@@ -242,7 +242,7 @@ test "RTPS clamps the depth term up to H/2 for near geometry" {
     var cop2 = Cop2.init();
     // vz = 100, H = 1000: H/2 = 500 wins.
     stageProjection(&cop2, 16, 32, 100, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, .{});
+    cop2.executeCommand(0x4A08_0001, .{}, .off);
 
     try expectApproxEqAbs(@as(f32, 500.0), cop2.readPreciseData(14).z, 0.5);
 }
@@ -252,7 +252,7 @@ test "the precise position is the float projection, not the hardware MAC0" {
     // A depth chosen so the UNR reciprocal is inexact, which is what makes the
     // float projection differ from MAC0 >> 16 at all.
     stageProjection(&cop2, 300, 200, 1234, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, .{});
+    cop2.executeCommand(0x4A08_0001, .{}, .off);
 
     const p = cop2.readPreciseData(14);
     const expected_x: f32 = 300.0 * (1000.0 / 1234.0);
@@ -269,7 +269,7 @@ test "the drawing offset reaches the precise position" {
     var cop2 = Cop2.init();
     // OFX/OFY are 16.16: 40.5 and -8.25 pixels.
     stageProjection(&cop2, 0, 0, 1000, 1000, 40 * 65536 + 32768, -(8 * 65536 + 16384));
-    cop2.executeCommand(0x4A08_0001, .{});
+    cop2.executeCommand(0x4A08_0001, .{}, .off);
 
     const p = cop2.readPreciseData(14);
     try expectApproxEqAbs(@as(f32, 40.5), p.x, 0.001);
@@ -280,7 +280,7 @@ test "a projection with no depth records nothing rather than a NaN" {
     var cop2 = Cop2.init();
     // H = 0 and SZ3 = 0 leaves the divisor at zero.
     stageProjection(&cop2, 16, 32, 0, 0, 0, 0);
-    cop2.executeCommand(0x4A08_0001, .{});
+    cop2.executeCommand(0x4A08_0001, .{}, .off);
 
     try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
@@ -321,7 +321,7 @@ const rtps_sf0_lm: u32 = 0x4A00_0401;
 test "preserve projection off projects from the rounded registers" {
     var cop2 = Cop2.init();
     stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, 301, 0, 1001, 1000);
-    cop2.executeCommand(rtps_sf12, .{});
+    cop2.executeCommand(rtps_sf12, .{}, .off);
 
     const p = cop2.readPreciseData(14);
     try expectApproxEqAbs(@as(f32, 451.0 * 1000.0 / 1501.0), p.x, 0.0005);
@@ -331,7 +331,7 @@ test "preserve projection off projects from the rounded registers" {
 test "preserve projection on projects from the exact accumulator" {
     var cop2 = Cop2.init();
     stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, 301, 0, 1001, 1000);
-    cop2.executeCommand(rtps_sf12, preserve_on);
+    cop2.executeCommand(rtps_sf12, preserve_on, .off);
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags);
@@ -347,7 +347,7 @@ test "preserve projection on projects from the exact accumulator" {
 test "preserve projection refines a negative coordinate from its floor" {
     var cop2 = Cop2.init();
     stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
-    cop2.executeCommand(rtps_sf12, preserve_on);
+    cop2.executeCommand(rtps_sf12, preserve_on, .off);
 
     try expectEqual(@as(i16, -452), Cop2.asI16(cop2.readData(9)));
     try expectApproxEqAbs(@as(f32, -451.5 * 1000.0 / 1501.5), cop2.readPreciseData(14).x, 0.0005);
@@ -360,8 +360,8 @@ test "preserve projection leaves sf=0 X and Y alone" {
     var on = Cop2.init();
     stageDiagonal(&off, 1, 1, 0x1000, 300, 200, 1234, 1000);
     stageDiagonal(&on, 1, 1, 0x1000, 300, 200, 1234, 1000);
-    off.executeCommand(rtps_sf0, .{});
-    on.executeCommand(rtps_sf0, preserve_on);
+    off.executeCommand(rtps_sf0, .{}, .off);
+    on.executeCommand(rtps_sf0, preserve_on, .off);
 
     try expectEqual(off.readPreciseData(14), on.readPreciseData(14));
 }
@@ -374,8 +374,8 @@ test "preserve projection projects a saturated IR from the register" {
     var on = Cop2.init();
     stageDiagonal(&off, 0x7FFF, 0x1000, 0x1000, 8000, 0, 32000, 100);
     stageDiagonal(&on, 0x7FFF, 0x1000, 0x1000, 8000, 0, 32000, 100);
-    off.executeCommand(rtps_sf12, .{});
-    on.executeCommand(rtps_sf12, preserve_on);
+    off.executeCommand(rtps_sf12, .{}, .off);
+    on.executeCommand(rtps_sf12, preserve_on, .off);
     try expectEqual(@as(u32, 1 << 24), on.readCtrl(31) & (1 << 24)); // IR1 saturated
     try expectEqual(off.readPreciseData(14), on.readPreciseData(14));
 
@@ -384,8 +384,8 @@ test "preserve projection projects a saturated IR from the register" {
     var on_lm = Cop2.init();
     stageDiagonal(&off_lm, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
     stageDiagonal(&on_lm, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
-    off_lm.executeCommand(rtps_sf12_lm, .{});
-    on_lm.executeCommand(rtps_sf12_lm, preserve_on);
+    off_lm.executeCommand(rtps_sf12_lm, .{}, .off);
+    on_lm.executeCommand(rtps_sf12_lm, preserve_on, .off);
     try expectEqual(@as(i16, 0), Cop2.asI16(on_lm.readData(9)));
     try expectEqual(Value.valid_xyz, on_lm.readPreciseData(14).flags);
     try expectEqual(off_lm.readPreciseData(14).x, on_lm.readPreciseData(14).x);
@@ -397,8 +397,8 @@ test "preserve projection projects a saturated IR2 from the register" {
     var on = Cop2.init();
     stageDiagonal(&off, 0x1000, 0x7FFF, 0x1000, 0, 8000, 32000, 100);
     stageDiagonal(&on, 0x1000, 0x7FFF, 0x1000, 0, 8000, 32000, 100);
-    off.executeCommand(rtps_sf12, .{});
-    on.executeCommand(rtps_sf12, preserve_on);
+    off.executeCommand(rtps_sf12, .{}, .off);
+    on.executeCommand(rtps_sf12, preserve_on, .off);
     try expectEqual(@as(u32, 1 << 23), on.readCtrl(31) & (1 << 23)); // IR2 saturated
     try expectEqual(Value.valid_xyz, on.readPreciseData(14).flags);
     try expectEqual(off.readPreciseData(14).y, on.readPreciseData(14).y);
@@ -408,8 +408,8 @@ test "preserve projection projects a saturated IR2 from the register" {
     var on_lm = Cop2.init();
     stageDiagonal(&off_lm, 0x1800, 0x1800, 0x1800, 0, -301, 1001, 1000);
     stageDiagonal(&on_lm, 0x1800, 0x1800, 0x1800, 0, -301, 1001, 1000);
-    off_lm.executeCommand(rtps_sf12_lm, .{});
-    on_lm.executeCommand(rtps_sf12_lm, preserve_on);
+    off_lm.executeCommand(rtps_sf12_lm, .{}, .off);
+    on_lm.executeCommand(rtps_sf12_lm, preserve_on, .off);
     try expectEqual(@as(i16, 0), Cop2.asI16(on_lm.readData(10)));
     try expectEqual(Value.valid_xyz, on_lm.readPreciseData(14).flags);
     try expectEqual(off_lm.readPreciseData(14).y, on_lm.readPreciseData(14).y);
@@ -463,7 +463,7 @@ test "preserve projection off is bit-identical to the pre-Phase-6 projection" {
                 stageDiagonal(&cop2, c.rt[0], c.rt[1], c.rt[2], c.v[0], c.v[1], c.v[2], c.h);
                 cop2.writeCtrl(24, c.ofx);
                 cop2.writeCtrl(25, c.ofy);
-                cop2.executeCommand(command, .{});
+                cop2.executeCommand(command, .{}, .off);
 
                 const got = cop2.readPreciseData(14);
                 // A saturated vertex is rejected whichever way it is projected.
@@ -491,8 +491,8 @@ test "preserve projection moves no GTE register and refines every RTPT vertex" {
         c.writeData(4, (@as(u32, 105) << 16) | 305); // VXY2
         c.writeData(5, 1005); // VZ2
     }
-    off.executeCommand(0x4A28_0030, .{}); // RTPT, sf=1
-    on.executeCommand(0x4A28_0030, preserve_on);
+    off.executeCommand(0x4A28_0030, .{}, .off); // RTPT, sf=1
+    on.executeCommand(0x4A28_0030, preserve_on, .off);
 
     try std.testing.expectEqualSlices(u32, &off.data_regs, &on.data_regs);
     try std.testing.expectEqualSlices(u32, &off.ctrl_regs, &on.ctrl_regs);
@@ -1553,7 +1553,7 @@ test "a projection records its vertex in the cache" {
 
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
-    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache }); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache }, .off); // RTPS, sf=1, lm=0
 
     const word = cop2.readData(14);
     const hit = cache.get(word).?;
@@ -1570,7 +1570,7 @@ test "a saturated projection does not evict the cached vertex at its position" {
     // is the best answer anyone has for it.
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 2000);
-    cop2.executeCommand(0x4A18_0001, .{});
+    cop2.executeCommand(0x4A18_0001, .{}, .off);
 
     const word = cop2.readData(14);
     try expectEqual(@as(u32, 1023), word & 0xFFFF);
@@ -1578,7 +1578,7 @@ test "a saturated projection does not evict the cached vertex at its position" {
     cache.put(word, .{ .x = 1023.5, .y = 0.0, .word = word, .flags = Value.valid_xy });
 
     cop2.writeData(0, 2000);
-    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache });
+    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache }, .off);
 
     try expectApproxEqAbs(@as(f32, 1023.5), cache.get(word).?.x, 0.0);
 }
@@ -1796,7 +1796,7 @@ fn mac0(cop2: *Cop2) i32 {
 test "float NCLIP is used when all three vertices are precise" {
     var cop2 = Cop2.init();
     stagePreciseTriangle(&cop2, flat_triangle, true);
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     // Cross product 10 * 0.6 = 6, against an integer zero.
     try expectEqual(@as(i32, 6), mac0(&cop2));
@@ -1811,7 +1811,7 @@ test "a float NCLIP result under 1.0 is pushed away from zero" {
         .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
         .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.03 },
     }, true);
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     try expectEqual(@as(i32, 1), mac0(&cop2));
 }
@@ -1825,7 +1825,7 @@ test "a float NCLIP result keeps its sign when it is pushed away from zero" {
         .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.03 },
         .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
     }, true);
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     try expectEqual(@as(i32, -1), mac0(&cop2));
 }
@@ -1839,7 +1839,7 @@ test "a float NCLIP result below the nudge floor stays zero" {
         .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
         .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.005 },
     }, true);
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     try expectEqual(@as(i32, 0), mac0(&cop2));
 }
@@ -1849,7 +1849,7 @@ test "NCLIP falls back to integers when a vertex has no depth" {
     // Same geometry, but built by the game rather than projected. Running the
     // accurate path over 2D geometry is how this feature would break a HUD.
     stagePreciseTriangle(&cop2, flat_triangle, false);
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     try expectEqual(@as(i32, 0), mac0(&cop2));
 }
@@ -1865,7 +1865,7 @@ test "NCLIP falls back to integers when a precise entry is stale" {
     // only way to exercise a guard like that is to stage what it guards
     // against.
     cop2.precise[13].word ^= 1;
-    cop2.executeCommand(0x4A00_0006, nclip_on);
+    cop2.executeCommand(0x4A00_0006, nclip_on, .off);
 
     try expectEqual(@as(i32, 0), mac0(&cop2));
 }
@@ -1873,7 +1873,7 @@ test "NCLIP falls back to integers when a precise entry is stale" {
 test "culling correction does nothing while it is off" {
     var cop2 = Cop2.init();
     stagePreciseTriangle(&cop2, flat_triangle, true);
-    cop2.executeCommand(0x4A00_0006, nclip_off);
+    cop2.executeCommand(0x4A00_0006, nclip_off, .off);
 
     try expectEqual(@as(i32, 0), mac0(&cop2));
 }

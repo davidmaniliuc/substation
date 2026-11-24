@@ -483,6 +483,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   video timing take real cycles.** Timers on the system clock, SIO, DMA,
   MDEC and GPU drawing stay in CPU cycles; at 100% every conversion is the
   identity and both carries stay 0.
+- **The widescreen hack narrows RTPS/RTPT's X, and only off 4:3**
+  (`widescreen.zig`, `Bus.widescreen`, passed to `executeCommand` beside
+  the PGXP config). At `.off` the projection is the hardware's expression
+  untouched, which is why no golden moves; PGXP's float X takes the same
+  ratio or every resolved vertex clamps. Host configuration, never in a
+  state; the display and the window take the matching shape.
 - **`scheduler.deadline` must name EVERY device countdown**, and every MMIO
   access must `sync` first. A term left out is an event that fires late; the
   scheduler is exact only because nothing is ever due inside a deferred window.

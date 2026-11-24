@@ -4,6 +4,7 @@ const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 const PgxpConfig = @import("../pgxp/pgxp.zig").Config;
+const Widescreen = @import("../widescreen.zig").Widescreen;
 
 /// One input to the float projection. The register by default; under
 /// `preserve` the exact accumulator it was truncated from — but only where
@@ -20,7 +21,7 @@ fn projectionInput(register: i64, acc: i64, shift: u6, preserve: bool) f32 {
     return @floatFromInt(register);
 }
 
-fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool, pgxp: PgxpConfig) void {
+fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool, pgxp: PgxpConfig, widescreen: Widescreen) void {
     const tr = [3]i32{
         @as(i32, @bitCast(cop2.ctrl_regs[5])),
         @as(i32, @bitCast(cop2.ctrl_regs[6])),
@@ -87,7 +88,12 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     // MAC0 is the projected coordinate in 16.16 — the `>> 16` below is the
     // whole of the precision loss PGXP exists to undo, so the unshifted value
     // is kept before it happens.
-    const x_16_16 = math.setMac0(cop2, h_s3z * ir1 + ofx);
+    // The widescreen hack narrows X before the offset and before MAC0's
+    // overflow check sees it. `@divTrunc`, as a C divide truncates, and only
+    // off the 4:3 path, which stays the hardware's expression exactly.
+    const xs = widescreen.xScale();
+    const x_proj = if (widescreen == .off) h_s3z * ir1 else @divTrunc(h_s3z * ir1 * xs.num, xs.den);
+    const x_16_16 = math.setMac0(cop2, x_proj + ofx);
     const y_16_16 = math.setMac0(cop2, h_s3z * ir2 + ofy);
     const x = x_16_16 >> 16;
     const y = y_16_16 >> 16;
@@ -130,8 +136,9 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     const zf = @max(hf / 2.0, sz3f);
     cop2.precise[14] = if (x == sxy2.x and y == sxy2.y and zf > 0.0) blk: {
         const h_div_z = @min(hf / zf, 131071.0 / 65536.0);
+        const x_ratio: f32 = @as(f32, @floatFromInt(xs.num)) / @as(f32, @floatFromInt(xs.den));
         break :blk .{
-            .x = std.math.clamp(ir1f * h_div_z + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
+            .x = std.math.clamp(ir1f * h_div_z * x_ratio + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
             .y = std.math.clamp(ir2f * h_div_z + @as(f32, @floatFromInt(ofy)) / 65536.0, -1024.0, 1023.0),
             .z = zf,
             .word = @bitCast(sxy2),
@@ -167,17 +174,17 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     }
 }
 
-pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig) void {
+pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig, widescreen: Widescreen) void {
     const p = @as(Cop2.Point2D, @bitCast(cop2.data_regs[0]));
     const vz = cop2.data_regs[1];
     const vx0 = @as(i64, p.x);
     const vy0 = @as(i64, p.y);
     const vz0 = @as(i64, Cop2.asI16(vz));
 
-    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true, pgxp);
+    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true, pgxp, widescreen);
 }
 
-pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig) void {
+pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig, widescreen: Widescreen) void {
     var j: usize = 0;
     while (j < 3) : (j += 1) {
         const base = j * 2;
@@ -188,7 +195,7 @@ pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig) void {
         const vz_val = @as(i64, Cop2.asI16(vz));
 
         // Only the last vertex updates MAC0/IR0.
-        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2, pgxp);
+        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2, pgxp, widescreen);
     }
 }
 

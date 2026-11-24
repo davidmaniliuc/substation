@@ -8,6 +8,7 @@ const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const scheduler = @import("cpu/scheduler.zig");
 const overclock = @import("cpu/overclock.zig");
+const Widescreen = @import("widescreen.zig").Widescreen;
 const InterruptController = @import("interrupt.zig").InterruptController;
 const pgxp = @import("pgxp/pgxp.zig");
 const Value = pgxp.Value;
@@ -221,6 +222,9 @@ pub const Bus = struct {
     /// state, and on `Bus` rather than in `sched`, which a state load
     /// replaces whole. Set through `setCpuOverclock`.
     cpu_overclock: overclock.Ratio = .{},
+    /// The GTE's widescreen X scale. Host configuration, never in a state;
+    /// `off` is zero, so the memset in `init` leaves it off.
+    widescreen: Widescreen = .off,
     /// The block engines' code cache, allocated only while one is selected
     /// (`recompiler.setEngine`). Owned here and freed by `deinit`, so a
     /// fresh `Bus` never carries blocks compiled from another machine's RAM.
