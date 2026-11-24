@@ -418,6 +418,7 @@ pub const Session = struct {
         storeChanged(usize, &c.rewind_budget, p.rewind_budget);
         storeChanged(u32, &c.runahead, p.runahead);
         storeChanged(u32, &c.cpu_overclock, f.cpu_overclock);
+        storeChanged(u8, &c.widescreen, @backingInt(p.widescreen));
         storeChanged(u8, &c.vram_mode, @backingInt(f.vram));
         if (self.mixer.gain() != p.gain) self.mixer.setGain(p.gain);
         if (foldRender(&self.settings, p, f)) self.renderer.mailbox.post(self.settings);
@@ -543,6 +544,7 @@ fn foldRender(r: *RenderSettings, p: settings.Settings, f: settings.Folded) bool
     r.texture_filter = p.texture_filter;
     r.sprite_filter = p.sprite_filter;
     r.display_effect = p.display_effect;
+    r.widescreen = p.widescreen;
     r.depth_buffer = f.pgxp.enabled and f.pgxp.depth_buffer;
     return !std.meta.eql(before, r.*);
 }

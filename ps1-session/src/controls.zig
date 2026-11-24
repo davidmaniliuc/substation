@@ -70,6 +70,8 @@ pub const Controls = struct {
     runahead: Atomic(u32) = .init(0),
     /// The folded CPU clock in percent, re-applied every frame.
     cpu_overclock: Atomic(u32) = .init(100),
+    /// `Widescreen`, re-applied every frame.
+    widescreen: Atomic(u8) = .init(0),
     /// `PS1_SOFTWARE_DISPLAY` / `PS1_LIVE_DIFF`: their readers need the
     /// shadow of every frame. Set once, before the thread starts.
     shadow_every_frame: bool = false,

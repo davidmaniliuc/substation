@@ -25,14 +25,19 @@ const native_pixels = dh.native_pixels;
 const decode = image_io.decodePng;
 
 test "Screenshot: theHeightIsTheDisplayedLinesAtTheScale" {
-    try expectEqual(screenshot.Size{ .width = 1280, .height = 960 }, screenshot.size(240, 4, true));
-    try expectEqual(screenshot.Size{ .width = 1280, .height = 960 }, screenshot.size(480, 2, true));
-    try expectEqual(screenshot.Size{ .width = 896, .height = 672 }, screenshot.size(224, 3, true));
+    try expectEqual(screenshot.Size{ .width = 1280, .height = 960 }, screenshot.size(240, 4, true, 4.0 / 3.0));
+    try expectEqual(screenshot.Size{ .width = 1280, .height = 960 }, screenshot.size(480, 2, true, 4.0 / 3.0));
+    try expectEqual(screenshot.Size{ .width = 896, .height = 672 }, screenshot.size(224, 3, true, 4.0 / 3.0));
+}
+
+test "Screenshot: theWidthFollowsTheWidescreenShape" {
+    try expectEqual(screenshot.Size{ .width = 1707, .height = 960 }, screenshot.size(240, 4, true, 16.0 / 9.0));
+    try expectEqual(screenshot.Size{ .width = 768, .height = 480 }, screenshot.size(0, 4, false, 16.0 / 10.0));
 }
 
 test "Screenshot: aDisabledDisplayIsAPlainBlackFrame" {
-    try expectEqual(screenshot.Size{ .width = 640, .height = 480 }, screenshot.size(0, 4, false));
-    try expectEqual(screenshot.Size{ .width = 640, .height = 480 }, screenshot.size(0, 4, true));
+    try expectEqual(screenshot.Size{ .width = 640, .height = 480 }, screenshot.size(0, 4, false, 4.0 / 3.0));
+    try expectEqual(screenshot.Size{ .width = 640, .height = 480 }, screenshot.size(0, 4, true, 4.0 / 3.0));
 }
 
 test "Screenshot: aPngRoundTripsItsPixels" {
@@ -133,7 +138,7 @@ test "Screenshot: aScreenshotBlockOutlivesTheRendererThatAskedForIt" {
     defer alloc.destroy(ctx);
 
     const p = dh.params();
-    const s = screenshot.size(p.height, p.scale, p.enabled != 0);
+    const s = screenshot.size(p.height, p.scale, p.enabled != 0, 4.0 / 3.0);
     const cmd = blk: {
         const pool = objc.Pool.push();
         defer pool.pop();

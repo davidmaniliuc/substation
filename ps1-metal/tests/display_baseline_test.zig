@@ -97,7 +97,7 @@ fn draw(m: harness.Metal, c: Case) ![]u8 {
     p.saturation = c.saturation;
     const w: f64 = @floatFromInt(c.drawable[0]);
     const h: f64 = @floatFromInt(c.drawable[1]);
-    const box = display.letterboxScale(w, h);
+    const box = display.letterboxScale(w, h, 4.0 / 3.0);
     p.scale_x = box.x;
     p.scale_y = box.y;
     if (c.band_mix > 0) display.applyBand(&p, band, c.band_mix, .{ w, h }, c.points);

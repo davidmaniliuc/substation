@@ -51,6 +51,7 @@ fn settingsValue() abi.Ps1SessionSettings {
         .vram_readbacks = 1,
         .cpu_overclock = 0,
         .display_effect = 0,
+        .widescreen = 0,
     };
 }
 
@@ -222,6 +223,8 @@ test "SessionAbi: theSettingsStructIsSeventyTwoBytes" {
     // The effect took the padding the overclock left and a new eight bytes
     // for the next field's alignment.
     try expectEqual(64, @offsetOf(abi.Ps1SessionSettings, "display_effect"));
+    // The widescreen mode took the effect's tail padding.
+    try expectEqual(68, @offsetOf(abi.Ps1SessionSettings, "widescreen"));
 }
 
 test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
@@ -378,4 +381,21 @@ test "SessionAbi: settingsOf maps the display effect and keeps the held one for 
     p.display_effect = 0;
     try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
     try expectEqual(.none, s.player.display_effect);
+}
+
+test "SessionAbi: theWidescreenModeReachesTheMachineAndTheRenderer" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    p.widescreen = 2; // PS1_WIDESCREEN_16_9
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.wide_16_9, s.player.widescreen);
+    try expectEqual(.wide_16_9, s.settings.widescreen);
+    try expectEqual(@as(u8, 2), s.loop.controls.widescreen.load(.acquire));
+    p.widescreen = 99;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.wide_16_9, s.player.widescreen);
+    p.widescreen = 0;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.off, s.settings.widescreen);
 }

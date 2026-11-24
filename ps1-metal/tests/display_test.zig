@@ -64,7 +64,7 @@ fn render(width: u32, height: u32, o: Options) !Rendered {
     var p = dh.params();
     p.depth24 = @intFromBool(o.depth24);
     p.software_display = @intFromBool(o.software_display);
-    const s = display.letterboxScale(@floatFromInt(width), @floatFromInt(height));
+    const s = display.letterboxScale(@floatFromInt(width), @floatFromInt(height), 4.0 / 3.0);
     p.scale_x = s.x;
     p.scale_y = s.y;
     return .{ .width = width, .bgra = try dh.render(alloc, m, &pass, vram, side, p, width, height) };
@@ -214,30 +214,41 @@ test "Display: theSoftwareDisplaySeamIgnoresTheSidecar" {
 // copy of the last texel column on the right, which is what these pin.
 
 test "Display letterbox: letterboxIsIdentityOnAFourThreeDrawable" {
-    const s = display.letterboxScale(1280, 960);
+    const s = display.letterboxScale(1280, 960, 4.0 / 3.0);
     try expectEqual(1, s.x);
     try expectEqual(1, s.y);
 }
 
 test "Display letterbox: letterboxPillarboxesAWideDrawable" {
     // 16:9; the picture keeps full height and loses width.
-    const s = display.letterboxScale(640, 360);
+    const s = display.letterboxScale(640, 360, 4.0 / 3.0);
     try expect(@abs(s.x - 0.75) < 1e-6);
     try expectEqual(1, s.y);
 }
 
 test "Display letterbox: letterboxLetterboxesATallDrawable" {
     // 4:5; the picture keeps full width and loses height.
-    const s = display.letterboxScale(480, 600);
+    const s = display.letterboxScale(480, 600, 4.0 / 3.0);
     try expectEqual(1, s.x);
     try expect(@abs(s.y - 0.6) < 1e-6);
+}
+
+// Under the widescreen hack the target is the wide shape: a 16:9 drawable is
+// filled, and a 4:3 one letterboxes it.
+test "Display letterbox: aWidescreenTargetFillsItsOwnShape" {
+    const fill = display.letterboxScale(1280, 720, 16.0 / 9.0);
+    try expectEqual(1, fill.x);
+    try expectEqual(1, fill.y);
+    const boxed = display.letterboxScale(1280, 960, 16.0 / 9.0);
+    try expectEqual(1, boxed.x);
+    try expect(@abs(boxed.y - 0.75) < 1e-6);
 }
 
 // The window is aspect-locked, so the ratio lands a hair off 4:3 rather than
 // exactly on it. Without the snap, a scale of 0.99999 blacks out the outermost
 // pixel column for nothing.
 test "Display letterbox: letterboxSnapsToIdentityWithinHalfAPixel" {
-    const s = display.letterboxScale(1280.3, 960);
+    const s = display.letterboxScale(1280.3, 960, 4.0 / 3.0);
     try expectEqual(1, s.x);
     try expectEqual(1, s.y);
 }
@@ -246,7 +257,7 @@ test "Display letterbox: letterboxSnapsToIdentityWithinHalfAPixel" {
 // vertex stage a NaN uv, which fails every bounds test and reads garbage.
 test "Display letterbox: letterboxRejectsADegenerateDrawable" {
     for ([_][2]f64{ .{ 0, 480 }, .{ 640, 0 }, .{ 0, 0 } }) |wh| {
-        const s = display.letterboxScale(wh[0], wh[1]);
+        const s = display.letterboxScale(wh[0], wh[1], 4.0 / 3.0);
         try expectEqual(1, s.x);
         try expectEqual(1, s.y);
     }

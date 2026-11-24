@@ -16,6 +16,7 @@ const Session = session.Session;
 const DiscBytes = session.DiscBytes;
 const settings = @import("settings.zig");
 const VramReadbacks = settings.VramReadbacks;
+const Widescreen = @FieldType(settings.Settings, "widescreen");
 const pi = metal.prim_instance;
 
 /// The testing allocator under test, so a leaked session fails the run.
@@ -99,6 +100,7 @@ pub const Ps1SessionSettings = extern struct {
     vram_readbacks: u8,
     cpu_overclock: i32,
     display_effect: i32,
+    widescreen: i32,
 };
 
 fn optSlice(p: ?[*]const u8, len: usize) ?[]const u8 {
@@ -146,6 +148,7 @@ fn settingsOf(p: ?*const Ps1SessionSettings, held: settings.Settings) ?settings.
         // 0, like 100, is off.
         .cpu_overclock = if (c.cpu_overclock <= 0) 100 else @intCast(std.math.clamp(c.cpu_overclock, 10, 1000)),
         .display_effect = enumOf(metal.display.Effect, c.display_effect) orelse held.display_effect,
+        .widescreen = enumOf(Widescreen, c.widescreen) orelse held.widescreen,
     };
 }
 

@@ -235,6 +235,11 @@ pub const FakeMachine = struct {
         self.log("setCpuOverclock");
     }
 
+    pub fn setWidescreen(self: *FakeMachine, mode: u8) void {
+        _ = mode;
+        self.log("setWidescreen");
+    }
+
     pub fn setVertexCache(self: *FakeMachine, on: bool) void {
         _ = on;
         self.log("setVertexCache");

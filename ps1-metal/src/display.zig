@@ -67,20 +67,20 @@ pub fn paramsFor(d: Display) Params {
     };
 }
 
-/// Multipliers that fit a 4:3 picture inside a drawable of `width` x `height`.
+/// Multipliers that fit a picture of shape `target` (width over height)
+/// inside a drawable of `width` x `height`.
 ///
 /// The PS1 output is 4:3 whatever the pixel resolution is, so aspect
 /// correction is a property of the display, not of the framebuffer's
-/// `width/height`.
+/// `width/height`; the widescreen hack only changes which shape that is.
 ///
-/// Exactly `(1, 1)` when the drawable is already 4:3, and SNAPPED there
+/// Exactly `(1, 1)` when the drawable is already `target`, and SNAPPED there
 /// rather than computed: the window is aspect-locked so the ratio lands a
 /// hair off 1.0, and a scale of 0.99999 blacks out the outermost pixel column
 /// for nothing. A zero-sized drawable also returns `(1, 1)`: the shader
 /// divides by these, so 0 would hand it a NaN uv.
-pub fn letterboxScale(width: f64, height: f64) struct { x: f32, y: f32 } {
+pub fn letterboxScale(width: f64, height: f64, target: f64) struct { x: f32, y: f32 } {
     if (!(width > 0 and height > 0)) return .{ .x = 1, .y = 1 };
-    const target = 4.0 / 3.0;
     const view_aspect = width / height;
     // Total bar width in device pixels is height * |view_aspect - target|.
     if (height * @abs(view_aspect - target) < 0.5) return .{ .x = 1, .y = 1 };

@@ -47,7 +47,7 @@ fn renderScaled(m: harness.Metal, pass: *display.DisplayPass, native: *const Ima
     p.depth24 = @intFromBool(o.depth24);
     p.software_display = @intFromBool(o.software_display);
     p.scale = scale;
-    const s = display.letterboxScale(@floatFromInt(o.drawable[0]), @floatFromInt(o.drawable[1]));
+    const s = display.letterboxScale(@floatFromInt(o.drawable[0]), @floatFromInt(o.drawable[1]), 4.0 / 3.0);
     p.scale_x = s.x;
     p.scale_y = s.y;
 

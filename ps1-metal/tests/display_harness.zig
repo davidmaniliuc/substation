@@ -118,7 +118,7 @@ pub fn renderEffect(
 /// `p` with the letterbox of a `width` x `height` drawable.
 pub fn fitted(p: display.Params, width: u32, height: u32) display.Params {
     var q = p;
-    const box = display.letterboxScale(@floatFromInt(width), @floatFromInt(height));
+    const box = display.letterboxScale(@floatFromInt(width), @floatFromInt(height), 4.0 / 3.0);
     q.scale_x = box.x;
     q.scale_y = box.y;
     return q;

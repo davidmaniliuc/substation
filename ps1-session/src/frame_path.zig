@@ -111,6 +111,7 @@ fn pass(self: anytype, now_ns: u64) Outcome {
     // say the value moved.
     self.m.applyPgxp(c.pgxp());
     self.m.setCpuOverclock(c.cpu_overclock.load(.acquire));
+    self.m.setWidescreen(c.widescreen.load(.acquire));
     const want_cache = c.vertex_cache.load(.acquire);
     if (want_cache != self.applied_vertex_cache) {
         self.m.setVertexCache(want_cache);

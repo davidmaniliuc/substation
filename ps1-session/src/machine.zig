@@ -144,7 +144,7 @@ const contract = [_][]const u8{
     "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
     "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
     "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
-    "setVramMode",         "setCpuOverclock",
+    "setVramMode",         "setCpuOverclock",   "setWidescreen",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -369,6 +369,11 @@ pub const HandleMachine = struct {
     /// Idempotent in the core, so it crosses every frame.
     pub fn setCpuOverclock(self: *HandleMachine, percent: u32) void {
         capi.ps1_set_cpu_overclock(self.h, percent);
+    }
+
+    /// `PS1_WIDESCREEN_*`. Idempotent in the core, so it crosses every frame.
+    pub fn setWidescreen(self: *HandleMachine, mode: u8) void {
+        capi.ps1_set_widescreen(self.h, mode);
     }
 
     /// Allocates or frees 83 MB: the caller crosses only a CHANGE.

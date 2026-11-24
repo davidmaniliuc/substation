@@ -21,6 +21,7 @@ const ReadbackDesk = @import("readback_desk.zig").ReadbackDesk;
 const Allocator = std.mem.Allocator;
 const LiveRenderer = live_renderer.LiveRenderer;
 const native_pixels = pi.native_pixels;
+const Widescreen = @import("ps1_core").widescreen.Widescreen;
 
 pub const Metal = @import("metal_context.zig").Metal;
 
@@ -39,6 +40,8 @@ pub const Settings = struct {
     /// A post-process over the picture the window shows. A screenshot is
     /// taken without it, and changing it rebuilds nothing.
     display_effect: display.Effect = .none,
+    /// The shape the picture is drawn at, a screenshot included.
+    widescreen: Widescreen = .off,
     /// The view's size in points and its backing scale: the drawable is
     /// their product, in pixels.
     size_points: [2]f64 = .{ 0, 0 },
@@ -271,7 +274,7 @@ pub const FrameRenderer = struct {
 
         var p = self.pictureParams();
         p.saturation = self.pause_fade.saturation(s.paused, now_s);
-        const box = display.letterboxScale(self.drawable_px[0], self.drawable_px[1]);
+        const box = display.letterboxScale(self.drawable_px[0], self.drawable_px[1], s.widescreen.ratio());
         p.scale_x = box.x;
         p.scale_y = box.y;
         display.applyBand(&p, self.band, self.band_fade.eased(s.band_shown, now_s), self.drawable_px, s.size_points);
@@ -353,7 +356,7 @@ pub const FrameRenderer = struct {
         const requests = self.takeRequests(&taken);
         if (requests.len == 0) return;
         const shot = self.alloc.create(Shot) catch return answerAll(requests, null);
-        const s = screenshot.size(p.height, p.scale, p.enabled != 0);
+        const s = screenshot.size(p.height, p.scale, p.enabled != 0, self.current.widescreen.ratio());
         const target = screenshot.encode(cmd, &self.pass, self.live.vram.texture, self.live.vram.sidecar, p, s) orelse {
             self.alloc.destroy(shot);
             return answerAll(requests, null);

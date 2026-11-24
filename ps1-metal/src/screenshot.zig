@@ -1,6 +1,7 @@
 //! A screenshot is what is on screen: the display pass the window draws,
 //! rendered once more into a texture of its own at the internal resolution,
-//! in the 4:3 shape the player sees and with no letterbox. Naming and
+//! in the shape the player sees (4:3, or the widescreen hack's) and with no
+//! letterbox. Naming and
 //! writing the file stay the app's; this is the render half.
 
 const std = @import("std");
@@ -11,13 +12,13 @@ const display = @import("display.zig");
 pub const Size = struct { width: u32, height: u32 };
 
 /// The displayed lines at the internal scale, and the width that makes it
-/// 4:3, the shape the window shows whatever the horizontal resolution. A
-/// display that is off, or shows no lines, is a black VGA frame.
-pub fn size(display_height: u32, scale: u32, enabled: bool) Size {
-    if (!enabled or display_height == 0) return .{ .width = 640, .height = 480 };
-    const height = display_height * scale;
+/// `aspect` (width over height), the shape the window shows whatever the
+/// horizontal resolution. A display that is off, or shows no lines, is a
+/// black frame 480 lines tall.
+pub fn size(display_height: u32, scale: u32, enabled: bool, aspect: f64) Size {
+    const height = if (!enabled or display_height == 0) 480 else display_height * scale;
     const h: f64 = @floatFromInt(height);
-    return .{ .width = @intFromFloat(@round(h * 4 / 3)), .height = height };
+    return .{ .width = @intFromFloat(@round(h * aspect)), .height = height };
 }
 
 /// A BGRA target the CPU can read back once the GPU is done with it. Owned

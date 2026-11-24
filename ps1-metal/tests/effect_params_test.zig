@@ -96,7 +96,7 @@ test "Effect: anInterlacedDisplayHasHalfAsManyRowsAsLines" {
 
 test "Effect: theLetterboxShrinksThePictureAndOffsetsItsOrigin" {
     var p = params(320, 240, 1);
-    const box = display.letterboxScale(1600, 900);
+    const box = display.letterboxScale(1600, 900, 4.0 / 3.0);
     p.scale_x = box.x;
     p.scale_y = box.y;
     const e = display.effectParams(p, .{ 1600, 900 });
