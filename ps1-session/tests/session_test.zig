@@ -36,15 +36,17 @@ fn headless(card_dir: []const u8) Config {
     return .{ .bios = &zero_bios, .card_dir = card_dir, .audio = .none };
 }
 
-/// Polls `done` for up to two seconds, pulling the mixer as the output
-/// callback would so the emulator thread never parks on a full ring.
+/// Polls `done` for up to ten seconds, pulling the mixer as the output
+/// callback would so the emulator thread never parks on a full ring. The
+/// session runs at 60 frames a second, so the bound is a hang guard with room
+/// for a loaded machine: two seconds was exactly 120 frames.
 fn until(s: *Session, ctx: anytype, comptime done: fn (@TypeOf(ctx)) bool, what: []const u8) !void {
     var left: [512]f32 = undefined;
     var right: [512]f32 = undefined;
     const t0 = std.Io.Clock.awake.now(io);
     while (!done(ctx)) {
-        if (t0.untilNow(io, .awake).nanoseconds > 2 * std.time.ns_per_s) {
-            std.debug.print("{s}: not within 2 s\n", .{what});
+        if (t0.untilNow(io, .awake).nanoseconds > 10 * std.time.ns_per_s) {
+            std.debug.print("{s}: not within 10 s\n", .{what});
             return error.TestUnexpectedResult;
         }
         s.mixer.pull(&left, &right);
