@@ -112,6 +112,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
             #expect(s.textureFilter == model.textureFilter)
             #expect(s.spriteFilter == model.spriteFilter)
             #expect(s.displayEffect == model.displayEffect)
+            #expect(s.widescreen == model.widescreen)
             #expect(s.pgxp.enabled == model.pgxpEnabled)
             #expect(s.pgxp.cpu == model.pgxpCpu)
             #expect(s.pgxpUsePresets == model.pgxpUsePresets)
@@ -156,6 +157,8 @@ private func makeEntry(serial: String) throws -> GameEntry {
                 return { m.spriteFilter = o } }),
             ("display effect", { m in let o = m.displayEffect; m.displayEffect = o == .none ? .crt : .none
                 return { m.displayEffect = o } }),
+            ("widescreen", { m in let o = m.widescreen; m.widescreen = o == .off ? .wide16x9 : .off
+                return { m.widescreen = o } }),
             ("pgxp", { m in let o = m.pgxpEnabled; m.pgxpEnabled = !o; return { m.pgxpEnabled = o } }),
             ("engine", { m in let o = m.cpuEngine; m.cpuEngine = o == .interpreter ? .cachedInterpreter : .interpreter
                 return { m.cpuEngine = o } }),

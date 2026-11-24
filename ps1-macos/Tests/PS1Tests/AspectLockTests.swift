@@ -131,11 +131,33 @@ import AppKit
         contentRect: NSRect(x: 0, y: 0, width: 300, height: 225),
         styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
 
-    WindowConfigurator.lockAspect(on: window)
+    WindowConfigurator.lockAspect(on: window, to: WindowConfigurator.aspect)
 
     #expect(window.contentAspectRatio == WindowConfigurator.aspect)
-    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
-    #expect(window.frame.size == WindowConfigurator.minimumSize)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize(for: WindowConfigurator.aspect))
+    #expect(window.frame.size == WindowConfigurator.minimumSize(for: WindowConfigurator.aspect))
+}
+
+/// Under the widescreen hack the lock holds the wide shape, and its minimum is
+/// as wide as 4:3's and correspondingly shorter.
+@MainActor
+@Test func aWidescreenLockHoldsItsOwnShapeAndMinimum() {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 300, height: 225),
+        styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
+    let probe = WindowConfigurator.Probe()
+    window.contentView?.addSubview(probe)
+    let wide = Widescreen.wide16x9.aspect
+
+    WindowConfigurator.lockAspect(on: window, to: wide)
+
+    #expect(window.contentAspectRatio == wide)
+    #expect(window.contentMinSize == NSSize(width: 640, height: 360))
+    #expect(window.frame.size == NSSize(width: 640, height: 360))
+    window.contentMinSize = NSSize(width: 640, height: 219)
+    #expect(window.contentMinSize == NSSize(width: 640, height: 360))
+    #expect(WindowConfigurator.wantedAspect(lockAspect: true, styleMaskIsFullScreen: false,
+                                            transitioning: false, aspect: wide) == wide)
 }
 
 /// SwiftUI writes its own content minimum over the window's whenever it lays
@@ -150,13 +172,13 @@ import AppKit
         styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
     let probe = WindowConfigurator.Probe()
     window.contentView?.addSubview(probe)
-    WindowConfigurator.lockAspect(on: window)
+    WindowConfigurator.lockAspect(on: window, to: WindowConfigurator.aspect)
 
     window.contentMinSize = NSSize(width: 640, height: 219)
-    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize(for: WindowConfigurator.aspect))
 
     window.minSize = NSSize(width: 640, height: 219)
-    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize(for: WindowConfigurator.aspect))
 
     // Unlocked (fullscreen), SwiftUI's minimum stands.
     WindowConfigurator.clearAspectLock(on: window)

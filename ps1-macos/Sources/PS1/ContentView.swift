@@ -84,7 +84,8 @@ public struct ContentView: View {
         // bring them back with.
         .background(WindowConfigurator(
             lockAspect: showsGame,
-            chromeVisible: !showsGame || (libraryGame?.hudVisible ?? true)
+            chromeVisible: !showsGame || (libraryGame?.hudVisible ?? true),
+            aspect: model.widescreen.aspect
         ))
         // The library's window is see-through: the desktop shows through the
         // system's material and the panel sits inset on it. Everywhere else

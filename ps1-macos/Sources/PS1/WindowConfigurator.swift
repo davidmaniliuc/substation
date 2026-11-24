@@ -10,15 +10,22 @@ import AppKit
 /// `updateNSView` re-runs on every change to the values passed in, which is
 /// what drives the chrome fade.
 struct WindowConfigurator: NSViewRepresentable {
-    /// The PS1 picture is 4:3 whatever its pixel resolution; locking the
-    /// window to it means the game fills the window exactly, with no letterbox
-    /// bar and nothing cropped.
+    /// The PS1 picture is 4:3 whatever its pixel resolution, or the
+    /// widescreen hack's shape; locking the window to it means the game fills
+    /// the window exactly, with no letterbox bar and nothing cropped.
     static let aspect = NSSize(width: 4, height: 3)
-    /// The smallest game the HUD bar and the title strip are laid out for.
-    static let minimumSize = NSSize(width: 640, height: 480)
+    /// The narrowest game the HUD bar and the title strip are laid out for.
+    static let minimumWidth: CGFloat = 640
+
+    /// The smallest window of shape `aspect`: 640x480 at 4:3.
+    static func minimumSize(for aspect: NSSize) -> NSSize {
+        NSSize(width: minimumWidth, height: (minimumWidth * aspect.height / aspect.width).rounded())
+    }
 
     let lockAspect: Bool
     let chromeVisible: Bool
+    /// The shape to lock to (`Widescreen.aspect`).
+    var aspect: NSSize = WindowConfigurator.aspect
 
     /// The ratio to hold the window to, `.zero` meaning "no lock".
     ///
@@ -43,7 +50,8 @@ struct WindowConfigurator: NSViewRepresentable {
     /// the same reason `InternalResolution` and `VolumeControlState` are value types.
     static func wantedAspect(lockAspect: Bool,
                              styleMaskIsFullScreen: Bool,
-                             transitioning: Bool) -> NSSize {
+                             transitioning: Bool,
+                             aspect: NSSize = WindowConfigurator.aspect) -> NSSize {
         (lockAspect && !styleMaskIsFullScreen && !transitioning) ? aspect : .zero
     }
 
@@ -67,7 +75,7 @@ struct WindowConfigurator: NSViewRepresentable {
         window.contentResizeIncrements = NSSize(width: 1, height: 1)
     }
 
-    /// Turns the ratio lock ON, holding the window to `minimumSize`.
+    /// Turns the ratio lock ON, holding the window to `minimumSize(for:)`.
     ///
     /// **The minimum has to be the window's own `contentMinSize`.** SwiftUI's
     /// `.frame(minWidth:)` reaches a programmatic resize but not a live one
@@ -84,7 +92,8 @@ struct WindowConfigurator: NSViewRepresentable {
     /// up further from 4:3 than it started. It never goes below the minimum
     /// either: SwiftUI reopens the same window for the next game, at whatever
     /// size the last one left it.
-    static func lockAspect(on window: NSWindow) {
+    static func lockAspect(on window: NSWindow, to aspect: NSSize) {
+        let minimumSize = minimumSize(for: aspect)
         window.contentAspectRatio = aspect
         window.contentMinSize = minimumSize
 
@@ -127,7 +136,8 @@ struct WindowConfigurator: NSViewRepresentable {
         let wanted = Self.wantedAspect(
             lockAspect: lockAspect,
             styleMaskIsFullScreen: window.styleMask.contains(.fullScreen),
-            transitioning: transitioning)
+            transitioning: transitioning,
+            aspect: aspect)
 
         guard window.contentAspectRatio != wanted else { return }
 
@@ -135,7 +145,7 @@ struct WindowConfigurator: NSViewRepresentable {
             Self.clearAspectLock(on: window)
             return
         }
-        Self.lockAspect(on: window)
+        Self.lockAspect(on: window, to: wanted)
     }
 
     private func applyChrome(to window: NSWindow) {
@@ -230,10 +240,11 @@ struct WindowConfigurator: NSViewRepresentable {
         /// sizes windows only on the main thread: asserted, not assumed.
         private nonisolated static func holdMinimum(on window: NSWindow) {
             MainActor.assumeIsolated {
-                guard window.contentAspectRatio == WindowConfigurator.aspect,
-                      window.contentMinSize != WindowConfigurator.minimumSize
-                else { return }
-                window.contentMinSize = WindowConfigurator.minimumSize
+                let ratio = window.contentAspectRatio
+                guard ratio.width > 0, ratio.height > 0 else { return }
+                let minimum = WindowConfigurator.minimumSize(for: ratio)
+                guard window.contentMinSize != minimum else { return }
+                window.contentMinSize = minimum
             }
         }
 

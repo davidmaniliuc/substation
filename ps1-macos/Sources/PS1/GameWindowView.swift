@@ -142,13 +142,14 @@ public struct GameWindowView: View {
                 GameScreen(model: model, game: game)
             }
         }
-            // No minimum height: the 4:3 lock derives it from the width, and
+            // No minimum height: the aspect lock derives it from the width, and
             // one here would apply below the toolbar band (`ContentView`).
             .frame(minWidth: 640)
             .navigationTitle(game?.discTitle ?? "")
-            // Locked to 4:3 with the traffic lights fading with the HUD, as
-            // the library's window is while it shows a game.
-            .background(WindowConfigurator(lockAspect: true, chromeVisible: game?.hudVisible ?? true))
+            // Locked to the picture's shape with the traffic lights fading
+            // with the HUD, as the library's window is while it shows a game.
+            .background(WindowConfigurator(lockAspect: true, chromeVisible: game?.hudVisible ?? true,
+                                           aspect: model.widescreen.aspect))
             // The toolbar's band and the white title strip are a game's dark
             // chrome under a Light system too.
             .preferredColorScheme(.dark)

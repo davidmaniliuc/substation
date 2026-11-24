@@ -95,6 +95,7 @@ struct SessionSettings: Equatable, Sendable {
     /// per-game table under it.
     var cpuOverclock: Int = 100
     var displayEffect: DisplayEffect = .none
+    var widescreen: Widescreen = .off
 
     var c: Ps1SessionSettings {
         Ps1SessionSettings(
@@ -111,7 +112,8 @@ struct SessionSettings: Equatable, Sendable {
             pgxp_use_presets: pgxpUsePresets ? 1 : 0,
             vram_readbacks: UInt8(vramReadbacks.rawValue),
             cpu_overclock: Int32(clamping: cpuOverclock),
-            display_effect: Int32(displayEffect.rawValue))
+            display_effect: Int32(displayEffect.rawValue),
+            widescreen: Int32(widescreen.rawValue))
     }
 }
 

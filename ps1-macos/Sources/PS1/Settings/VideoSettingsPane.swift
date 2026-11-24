@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Internal resolution, dithering, the two texture filters, the display
-/// effect and the running game's VRAM readbacks: the Video menu's entries.
+/// Internal resolution, dithering, the two texture filters, widescreen, the
+/// display effect and the running game's VRAM readbacks: the Video menu's
+/// entries.
 struct VideoSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -53,6 +54,15 @@ struct VideoSettingsPane: View {
             }
 
             Section {
+                SettingRow(SettingsCopy.widescreen) {
+                    Picker(SettingsCopy.widescreen.title, selection: $model.widescreen) {
+                        ForEach(Widescreen.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
                 SettingRow(SettingsCopy.displayEffect) {
                     Picker(SettingsCopy.displayEffect.title, selection: $model.displayEffect) {
                         ForEach(DisplayEffect.allCases) { effect in

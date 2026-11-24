@@ -152,6 +152,11 @@ enum SettingsCopy {
         description: "Smooths 2D graphics, including menus and text."
     )
 
+    static let widescreen = SettingInfo(
+        title: "Widescreen",
+        description: "Shows more of 3D scenes at a wider shape. Menus and 2D art are stretched."
+    )
+
     static let displayEffect = SettingInfo(
         title: "Display Effect",
         description: "Gives the picture a retro screen look. Screenshots stay clean."
@@ -269,7 +274,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering, textureFiltering, spriteTextureFiltering, displayEffect, vramReadbacks,
+        internalResolution, dithering, textureFiltering, spriteTextureFiltering, widescreen, displayEffect, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, quitGameKey, controllers, pauseMenuKey, vibration,

@@ -463,6 +463,18 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// The widescreen hack, persisted, and handed over like `displayEffect`.
+    /// Every game window's aspect lock follows it.
+    private var widescreenSetting = WidescreenSetting()
+
+    public var widescreen: Widescreen {
+        get { widescreenSetting.mode }
+        set {
+            widescreenSetting.set(newValue)
+            pushSettings()
+        }
+    }
+
     /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above. Every change hands the
     /// session every setting in one `setSettings`.
@@ -673,7 +685,8 @@ public final class EmulatorViewModel {
                         pgxpUsePresets: pgxpUsePresets,
                         vramReadbacks: vramReadbacks,
                         cpuOverclock: cpuOverclockSetting.effective,
-                        displayEffect: displayEffect)
+                        displayEffect: displayEffect,
+                        widescreen: widescreen)
     }
 
     /// The one hand-over of every setting to the session.
