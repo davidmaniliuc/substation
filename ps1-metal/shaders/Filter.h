@@ -101,8 +101,12 @@ struct Ps1Filtered {
 
 /// A filter's normalised colour and coverage as a `Ps1Filtered`: rgb in
 /// 0..1 to `t8`, and STP set where the filtered alpha is at least half.
+/// Coverage is clamped to 0..1 here, for every port (Nearest and Bilinear
+/// build theirs in range by construction): a ringing kernel
+/// (JINC2's anti-ringing lerp) can push it past 1, and `ps1_cover` would
+/// extrapolate through it and paint colours no texel holds beside a hole.
 inline Ps1Filtered ps1_filtered_of(float4 texcol, float a) {
-    return Ps1Filtered{ clamp(int3(round(texcol.rgb * 248.0)), 0, 248), a, texcol.a >= 0.5 };
+    return Ps1Filtered{ clamp(int3(round(texcol.rgb * 248.0)), 0, 248), saturate(a), texcol.a >= 0.5 };
 }
 
 /// The one texel holding `coords`, at full coverage unless it is a hole:

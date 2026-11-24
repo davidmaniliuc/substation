@@ -132,10 +132,6 @@ inline Ps1Filtered ps1_filter_jinc2(thread const Ps1TexSrc& src, float2 coords, 
     if (ialpha > 0.0)
         texcol.rgb /= float3(ialpha, ialpha, ialpha);
 
-    // The ringing the anti-ringing lerp leaves can push coverage past 1, which
-    // `ps1_cover` would extrapolate through; the reference's blend saturates it.
-    ialpha = clamp(ialpha, 0.0, 1.0);
-
     if (!blend_edges)
         ialpha = (ialpha >= 0.5) ? 1.0 : 0.0;
 
