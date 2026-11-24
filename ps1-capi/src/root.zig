@@ -365,6 +365,7 @@ const HostSettings = struct {
     disable_2d: bool,
     preserve_projection: bool,
     cpu_overclock: u32,
+    widescreen: ps1.widescreen.Widescreen,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -383,6 +384,7 @@ const HostSettings = struct {
             .disable_2d = bus.pgxp_disable_2d,
             .preserve_projection = bus.pgxp_preserve_projection,
             .cpu_overclock = bus.cpu_overclock.percent(),
+            .widescreen = bus.widescreen,
         };
     }
 
@@ -398,6 +400,7 @@ const HostSettings = struct {
         bus.pgxp_disable_2d = s.disable_2d;
         bus.pgxp_preserve_projection = s.preserve_projection;
         bus.setCpuOverclock(s.cpu_overclock);
+        bus.widescreen = s.widescreen;
         // Last, because it is what mirrors the rest onto the GPU.
         bus.setPgxp(s.on);
     }
@@ -1290,6 +1293,11 @@ pub export fn ps1_set_cpu_engine(h: *Handle, engine: c_int) i32 {
 /// time. Idempotent, so a host may re-apply it every frame.
 pub export fn ps1_set_cpu_overclock(h: *Handle, percent: u32) void {
     h.cpu.bus.setCpuOverclock(percent);
+}
+
+/// The GTE widescreen hack, `PS1_WIDESCREEN_*`. A value out of range is off.
+pub export fn ps1_set_widescreen(h: *Handle, mode: c_int) void {
+    h.cpu.bus.widescreen = if (mode >= 0) std.enums.fromInt(ps1.widescreen.Widescreen, mode) orelse .off else .off;
 }
 
 /// The engine the machine is running on now.

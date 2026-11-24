@@ -504,6 +504,16 @@ int32_t ps1_set_cpu_engine(Ps1*, int engine);
  * follow it. Not part of a save state. Idempotent: safe every frame. */
 void    ps1_set_cpu_overclock(Ps1*, uint32_t percent);
 
+/* The widescreen hack: the GTE narrows every projected X so the picture,
+ * stretched to the chosen shape, shows more of the world undistorted. The
+ * host draws the picture at that shape. Out of range is off. Not part of a
+ * save state. Idempotent: safe every frame. */
+#define PS1_WIDESCREEN_OFF   0
+#define PS1_WIDESCREEN_16_10 1
+#define PS1_WIDESCREEN_16_9  2
+#define PS1_WIDESCREEN_21_9  3
+void    ps1_set_widescreen(Ps1*, int widescreen);
+
 /* The engine the machine is running on now. */
 int     ps1_get_cpu_engine(const Ps1*);
 

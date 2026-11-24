@@ -129,6 +129,9 @@ typedef struct {
                                       * under it while it is off. */
     int32_t         display_effect;  /* PS1_EFFECT_*: over the window's picture
                                       * only, never a screenshot. */
+    int32_t         widescreen;      /* PS1_WIDESCREEN_*: the GTE hack, and the
+                                      * shape the picture and a screenshot
+                                      * are drawn at. */
 } Ps1SessionSettings;
 
 typedef struct {
