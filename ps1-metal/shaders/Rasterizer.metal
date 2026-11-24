@@ -611,7 +611,7 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         transparent = transparent && (src & 0x8000) != 0;
         // Bilinear touches the SIDECAR only. `src` (VRAM's value), the hole
         // and the STP bit above were all decided by the nearest texel.
-        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR) {
+        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR_NO_EDGE) {
             int2 c6 = ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6));
             side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y,
                                               ps1_uv_limit(p.u0, p.u1, p.u2, u),
@@ -669,7 +669,7 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
         // texcoord is taken at the subtexel CENTRE in the triangle's six-bit
         // units, unwrapped, so at 1x it lands on the texel centre and filters
         // to the nearest texel exactly.
-        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR) {
+        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR_NO_EDGE) {
             int nu = (nx - p.x0) + p.u0, nv = (ny - p.y0) + p.v0;
             int u6 = ((2 * px + 1) * 64) / (2 * s) - 64 * p.x0 + 64 * p.u0;
             int v6 = ((2 * py + 1) * 64) / (2 * s) - 64 * p.y0 + 64 * p.v0;

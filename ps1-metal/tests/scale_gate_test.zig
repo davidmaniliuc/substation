@@ -122,8 +122,8 @@ test "measuresReplayCostAtEachScale: Gate 4 Timing" {
     const Setting = struct { filter: pi.TextureFilter, sprite: pi.TextureFilter };
     const settings = [_]Setting{
         .{ .filter = .nearest, .sprite = .nearest },
-        .{ .filter = .bilinear, .sprite = .nearest },
-        .{ .filter = .bilinear, .sprite = .bilinear },
+        .{ .filter = .bilinear_no_edge, .sprite = .nearest },
+        .{ .filter = .bilinear_no_edge, .sprite = .bilinear_no_edge },
     };
     for (corpus) |name| {
         // `fixtureExists` covers the committed synthetics too: `fixturePath`

@@ -55,7 +55,17 @@ pub const DitherMode = enum(u32) {
 
 pub const TextureFilter = enum(u32) {
     nearest = c.PS1_FILTER_NEAREST,
+    bilinear_no_edge = c.PS1_FILTER_BILINEAR_NO_EDGE,
     bilinear = c.PS1_FILTER_BILINEAR,
+    jinc2 = c.PS1_FILTER_JINC2,
+    jinc2_no_edge = c.PS1_FILTER_JINC2_NO_EDGE,
+    xbr = c.PS1_FILTER_XBR,
+    xbr_no_edge = c.PS1_FILTER_XBR_NO_EDGE,
+    scale2x = c.PS1_FILTER_SCALE2X,
+    scale3x = c.PS1_FILTER_SCALE3X,
+    mmpx = c.PS1_FILTER_MMPX,
+    mmpx_enhanced = c.PS1_FILTER_MMPX_ENHANCED,
+    mmpx_advanced = c.PS1_FILTER_MMPX_ADVANCED,
 };
 
 /// The shipped dither setting (`DitherSetting.defaultMode`).

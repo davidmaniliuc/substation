@@ -313,9 +313,9 @@ test "FrameRenderer: theFiltersReachTheRasterizerWithoutARebuild" {
     try expectEqual(.nearest, r.sprite_filter);
     const vram = r.vram;
     const texture = b.r.live.vram.texture.id;
-    try b.post(.{ .texture_filter = .bilinear, .sprite_filter = .bilinear });
-    try expectEqual(.bilinear, r.texture_filter);
-    try expectEqual(.bilinear, r.sprite_filter);
+    try b.post(.{ .texture_filter = .bilinear_no_edge, .sprite_filter = .bilinear_no_edge });
+    try expectEqual(.bilinear_no_edge, r.texture_filter);
+    try expectEqual(.bilinear_no_edge, r.sprite_filter);
     try expectEqual(vram, r.vram);
     try expectEqual(texture, b.r.live.vram.texture.id);
     try expect(!b.x.queue.needsResync());

@@ -163,13 +163,27 @@ enum {
 
 /* Texture filtering (Ps1RasterUniforms.texture_filter and .sprite_filter).
  * DISPLAY-ONLY: a filtered colour reaches the true-colour sidecar and never
- * VRAM, and the hole, the STP bit and the VRAM value stay on the nearest
- * texel, so no gate can see either setting. Which of the two a primitive
- * follows is `ps1_is_sprite`'s decision. BILINEAR is DuckStation's
- * "Bilinear (No Edge Blending)": cut-out edges stay sharp. */
+ * VRAM, and VRAM's value, STP bit and depth stay on the nearest texel, so no
+ * gate can see either setting. Which of the two a primitive follows is
+ * `ps1_is_sprite`'s decision.
+ *
+ * The app persists these values, so 0 and 1 keep their meaning: 1 was
+ * "BILINEAR" before the edge-blending variant existed. BILINEAR, JINC2 and
+ * XBR blend a cut-out's edge into what is behind it (`ps1_filter_blends_edges`);
+ * every other filter keeps a hard edge. */
 enum {
     PS1_FILTER_NEAREST = 0,
-    PS1_FILTER_BILINEAR = 1
+    PS1_FILTER_BILINEAR_NO_EDGE = 1,
+    PS1_FILTER_BILINEAR = 2,
+    PS1_FILTER_JINC2 = 3,
+    PS1_FILTER_JINC2_NO_EDGE = 4,
+    PS1_FILTER_XBR = 5,
+    PS1_FILTER_XBR_NO_EDGE = 6,
+    PS1_FILTER_SCALE2X = 7,
+    PS1_FILTER_SCALE3X = 8,
+    PS1_FILTER_MMPX = 9,
+    PS1_FILTER_MMPX_ENHANCED = 10,
+    PS1_FILTER_MMPX_ADVANCED = 11
 };
 
 /* Per-DRAW state that is not per-primitive: the internal resolution, the

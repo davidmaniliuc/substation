@@ -1,8 +1,10 @@
 //! `ps1-bench-gpu`: the renderer benchmark's command line.
 //!
 //!   ps1-bench-gpu <fixture>[,<fixture>…] [--scales=1,4,6,8] [--repeats=5]
-//!     [--dither=true-color|native|scaled|off] [--filter=nearest|bilinear]
-//!     [--sprite-filter=nearest|bilinear]
+//!     [--dither=true-color|native|scaled|off] [--filter=<f>] [--sprite-filter=<f>]
+//!
+//! `<f>` is nearest, bilinear, bilinear-no-edge, jinc2, jinc2-no-edge, xbr,
+//! xbr-no-edge, scale2x, scale3x, mmpx, mmpx-enhanced or mmpx-advanced.
 //!
 //! Run from the repo root: fixtures are read from
 //! `ps1-core/tests/goldens/fixtures/` and `zig-out/fixtures/`. Prints one line
@@ -16,8 +18,9 @@ const fixture_corpus = ps1_metal.fixture_corpus;
 
 const usage =
     \\usage: ps1-bench-gpu <fixture>[,<fixture>...] [--scales=1,4,6,8] [--repeats=5]
-    \\         [--dither=true-color|native|scaled|off] [--filter=nearest|bilinear]
-    \\         [--sprite-filter=nearest|bilinear]
+    \\         [--dither=true-color|native|scaled|off] [--filter=<f>] [--sprite-filter=<f>]
+    \\  <f>: nearest, bilinear, bilinear-no-edge, jinc2, jinc2-no-edge, xbr, xbr-no-edge,
+    \\       scale2x, scale3x, mmpx, mmpx-enhanced, mmpx-advanced
     \\Build it with `zig build -Doptimize=ReleaseFast` and run it from the repo root.
     \\
 ;

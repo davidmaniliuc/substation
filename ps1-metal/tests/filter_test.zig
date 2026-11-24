@@ -51,7 +51,7 @@ test "theCorpusRendersIdenticalVramUnderEverySetting" {
     const m = try harness.metal();
     defer m.deinit();
     const corpus = [_][]const u8{ "synthetic-primitives", "synthetic-movers", "silent-hill-usa", "tr1-usa-v1-1", "tr1-usa-v1-1-pgxp" };
-    const settings = [_][2]TextureFilter{ .{ .nearest, .nearest }, .{ .bilinear, .nearest }, .{ .nearest, .bilinear }, .{ .bilinear, .bilinear } };
+    const settings = [_][2]TextureFilter{ .{ .nearest, .nearest }, .{ .bilinear_no_edge, .nearest }, .{ .nearest, .bilinear_no_edge }, .{ .bilinear_no_edge, .bilinear_no_edge } };
     var processed: usize = 0;
     for (corpus) |name| {
         if (!harness.fixtureExists(alloc, name)) continue;
@@ -104,7 +104,7 @@ test "bilinearAddsLevelsAcrossAMagnifiedEdge" {
     const draw = texturedTriangle(.{ .u0 = 0, .u1 = 2 });
     const near = try shot(m, 1, vram, .true_color, .nearest, null, &draw);
     defer near.deinit(alloc);
-    const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &draw);
+    const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &draw);
     defer bil.deinit(alloc);
     try check(sidecarStats(near, 128).distinct() == 2, "the control: nearest has {d} reds, not exactly two", .{sidecarStats(near, 128).distinct()});
     try check(sidecarStats(bil, 128).distinct() > 16, "bilinear has {d} reds across a 64x-magnified edge", .{sidecarStats(bil, 128).distinct()});
@@ -130,7 +130,7 @@ test "bilinearAddsLevelsAtEveryTextureDepth" {
     const Depth = struct { label: []const u8, tpage: u16 };
     for ([_]Depth{ .{ .label = "4bpp", .tpage = 0x0004 }, .{ .label = "8bpp", .tpage = 0x0082 } }) |d| {
         const draw = texturedTriangle(.{ .tpage = d.tpage, .clut = clut, .u0 = 0, .u1 = 2 });
-        const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &draw);
+        const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &draw);
         defer bil.deinit(alloc);
         try check(sidecarStats(bil, 128).distinct() > 16, "{s}: filtering did not reach the CLUT colours", .{d.label});
     }
@@ -154,7 +154,7 @@ test "aUniformTextureFiltersToItselfInEveryMode" {
     for (std.enums.values(DitherMode)) |dither| {
         const near = try shot(m, 2, vram, dither, .nearest, null, &draw);
         defer near.deinit(alloc);
-        const bil = try shot(m, 2, vram, dither, .bilinear, null, &draw);
+        const bil = try shot(m, 2, vram, dither, .bilinear_no_edge, null, &draw);
         defer bil.deinit(alloc);
         try check(sidecarStats(near, 128).count > 1000, "{t}: the triangle drew nothing", .{dither});
         try check(sameSidecar(near, bil), "{t}: a uniform texture filtered to something else", .{dither});
@@ -170,7 +170,7 @@ test "perspectiveTexcoordsFilterToo" {
     const draw = texturedTriangle(.{ .u0 = 0, .u1 = 2, .flags = command.flag_texture_perspective, .rw = .{ 65536, 16384, 65536 } });
     const near = try shot(m, 1, vram, .true_color, .nearest, null, &draw);
     defer near.deinit(alloc);
-    const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &draw);
+    const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &draw);
     defer bil.deinit(alloc);
     try check(sidecarStats(bil, 128).distinct() > 16, "bilinear has {d} reds on the perspective path", .{sidecarStats(bil, 128).distinct()});
     try check(sameVram(near, bil), "VRAM moved on the perspective path", .{});
@@ -197,7 +197,7 @@ test "aOneToOneMappingFiltersToTheNearestTexelAtOneX" {
     for (cases) |c| {
         const near = try shot(m, 1, vram, .true_color, .nearest, null, &c.draw);
         defer near.deinit(alloc);
-        const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &c.draw);
+        const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &c.draw);
         defer bil.deinit(alloc);
         try check(sidecarStats(near, 16).count > 100, "{s}: the triangle drew nothing", .{c.label});
         try check(sameSidecar(near, bil), "{s}: a 1:1 mapping was blurred", .{c.label});
@@ -216,7 +216,7 @@ test "aHoleNeighbourDrawsNoFringe" {
     const vram = try vramWithRows(&[_]u16{ 0x001F, 0x0000, 0x001F });
     defer alloc.destroy(vram);
     const draw = texturedTriangle(.{ .u0 = 0, .u1 = 2 });
-    const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &draw);
+    const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &draw);
     defer bil.deinit(alloc);
     const s = sidecarStats(bil, 128);
     try check(s.count > 1000, "the triangle drew nothing", .{});
@@ -241,7 +241,7 @@ test "uvLimitsKeepAtlasNeighboursOut" {
     const Case = struct { size: i16, scale: u32 };
     for ([_]Case{ .{ .size = 128, .scale = 1 }, .{ .size = 4, .scale = 4 }, .{ .size = 4, .scale = 8 } }) |c| {
         const draw = texturedTriangle(.{ .u0 = 4, .u1 = 8, .v0 = 4, .v1 = 8, .size = c.size });
-        const bil = try shot(m, c.scale, vram, .true_color, .bilinear, null, &draw);
+        const bil = try shot(m, c.scale, vram, .true_color, .bilinear_no_edge, null, &draw);
         defer bil.deinit(alloc);
         const s = sidecarStats(bil, @intCast(c.size));
         try check(s.count > 50, "@{d}x: the triangle drew nothing", .{c.scale});
@@ -258,7 +258,7 @@ test "filteredNeighboursWrapInsideTheTextureWindow" {
     const vram = try windowVram();
     defer alloc.destroy(vram);
     const draw = [_]Command{env(0xE2, 0x1F | (0x1F << 5))} ++ texturedTriangle(.{ .u0 = 0, .u1 = 20, .v0 = 0, .v1 = 20 });
-    const bil = try shot(m, 1, vram, .true_color, .bilinear, null, &draw);
+    const bil = try shot(m, 1, vram, .true_color, .bilinear_no_edge, null, &draw);
     defer bil.deinit(alloc);
     const s = sidecarStats(bil, 128);
     try check(s.count > 1000, "the triangle drew nothing", .{});
@@ -276,7 +276,7 @@ test "theDitheringModesStayFiveBitUnderBilinear" {
     for ([_]DitherMode{ .off, .native, .scaled }) |dither| {
         const near = try shot(m, 2, vram, dither, .nearest, null, &draw);
         defer near.deinit(alloc);
-        const bil = try shot(m, 2, vram, dither, .bilinear, null, &draw);
+        const bil = try shot(m, 2, vram, dither, .bilinear_no_edge, null, &draw);
         defer bil.deinit(alloc);
         const s = sidecarStats(bil, 128);
         // `expand` of a five-bit value: the byte is (c << 3) | (c >> 2).
@@ -295,7 +295,7 @@ test "aSemiTransparentFilteredDrawBlendsTheFilteredColourInDitheringModes" {
     defer alloc.destroy(vram);
     const draw = overDarkRed(160, texturedTriangle(.{ .opcode = 0x27, .tpage = page16 | (1 << 5), .u0 = 0, .u1 = 2, .transparent = 1 }));
     for ([_]DitherMode{ .off, .true_color }) |dither| {
-        const bil = try shot(m, 2, vram, dither, .bilinear, null, &draw);
+        const bil = try shot(m, 2, vram, dither, .bilinear_no_edge, null, &draw);
         defer bil.deinit(alloc);
         const n = sidecarStats(bil, 128).distinct();
         try check(n > 8, "{t}: the blend shows {d} reds; it used the nearest texel", .{ dither, n });
@@ -310,9 +310,9 @@ test "texturedRectanglesFollowTheSpriteSetting" {
     const draw = texturedRectangle(.{});
     const near = try shot(m, 4, vram, .true_color, .nearest, null, &draw);
     defer near.deinit(alloc);
-    const texture_only = try shot(m, 4, vram, .true_color, .bilinear, .nearest, &draw);
+    const texture_only = try shot(m, 4, vram, .true_color, .bilinear_no_edge, .nearest, &draw);
     defer texture_only.deinit(alloc);
-    const sprite_on = try shot(m, 4, vram, .true_color, .nearest, .bilinear, &draw);
+    const sprite_on = try shot(m, 4, vram, .true_color, .nearest, .bilinear_no_edge, &draw);
     defer sprite_on.deinit(alloc);
     try check(sidecarStats(near, 4).count > 100, "the sprite drew nothing", .{});
     try check(sameSidecar(near, texture_only), "Texture Filtering reached a rectangle", .{});
@@ -328,8 +328,8 @@ fn followed(m: Metal, draw: []const Command) ![2]usize {
     const vram = try vramWithRows(&edge_row);
     defer alloc.destroy(vram);
     return .{
-        try distinctReds(m, draw, vram, .bilinear, .nearest),
-        try distinctReds(m, draw, vram, .nearest, .bilinear),
+        try distinctReds(m, draw, vram, .bilinear_no_edge, .nearest),
+        try distinctReds(m, draw, vram, .nearest, .bilinear_no_edge),
     };
 }
 
@@ -384,7 +384,7 @@ test "aRectangleAtOneXFiltersToItself" {
     const draw = texturedRectangle(.{});
     const near = try shot(m, 1, vram, .true_color, .nearest, null, &draw);
     defer near.deinit(alloc);
-    const bil = try shot(m, 1, vram, .true_color, .nearest, .bilinear, &draw);
+    const bil = try shot(m, 1, vram, .true_color, .nearest, .bilinear_no_edge, &draw);
     defer bil.deinit(alloc);
     try check(sidecarStats(near, 4).count == 16, "the sprite drew {d} present pixels, not 16", .{sidecarStats(near, 4).count});
     try check(sameSidecar(near, bil), "a 1:1 sprite was blurred at 1x", .{});
@@ -400,7 +400,7 @@ test "aUniformSpriteFiltersToItselfInEveryMode" {
     for (std.enums.values(DitherMode)) |dither| {
         const near = try shot(m, 4, vram, dither, .nearest, null, &draw);
         defer near.deinit(alloc);
-        const bil = try shot(m, 4, vram, dither, .nearest, .bilinear, &draw);
+        const bil = try shot(m, 4, vram, dither, .nearest, .bilinear_no_edge, &draw);
         defer bil.deinit(alloc);
         try check(sidecarStats(near, 4).count > 100, "{t}: the sprite drew nothing", .{dither});
         try check(sameSidecar(near, bil), "{t}: a uniform sprite filtered to something else", .{dither});
@@ -431,7 +431,7 @@ test "aRectangleNeverFiltersPastItsWrapSegment" {
     }
     const draw = texturedRectangle(.{ .u0 = 250, .w = 12 });
     for ([_]u32{ 4, 8 }) |scale| {
-        const bil = try shot(m, scale, vram, .true_color, .nearest, .bilinear, &draw);
+        const bil = try shot(m, scale, vram, .true_color, .nearest, .bilinear_no_edge, &draw);
         defer bil.deinit(alloc);
         const s = sidecarStats(bil, 12);
         try check(s.count > 100, "@{d}x: the sprite drew nothing", .{scale});
@@ -448,7 +448,7 @@ test "aSpriteHoleDrawsNoFringe" {
     const vram = try vramWithRows(&[_]u16{ 0x001F, 0x0000, 0x001F, 0x001F });
     defer alloc.destroy(vram);
     const draw = texturedRectangle(.{});
-    const bil = try shot(m, 4, vram, .true_color, .nearest, .bilinear, &draw);
+    const bil = try shot(m, 4, vram, .true_color, .nearest, .bilinear_no_edge, &draw);
     defer bil.deinit(alloc);
     const s = sidecarStats(bil, 4);
     try check(s.count > 100, "the sprite drew nothing", .{});
@@ -464,7 +464,7 @@ test "aSemiTransparentFilteredSpriteBlendsTheFilteredColour" {
     defer alloc.destroy(vram);
     const draw = overDarkRed(32, texturedRectangle(.{ .opcode = 0x67, .tpage = page16 | (1 << 5), .transparent = 1 }));
     for ([_]DitherMode{ .off, .true_color }) |dither| {
-        const bil = try shot(m, 4, vram, dither, .nearest, .bilinear, &draw);
+        const bil = try shot(m, 4, vram, dither, .nearest, .bilinear_no_edge, &draw);
         defer bil.deinit(alloc);
         try check(sidecarStats(bil, 4).distinct() > 2, "{t}: the blend used the nearest texel", .{dither});
     }
@@ -479,7 +479,7 @@ test "aWindowedSpriteFiltersInsideItsWindow" {
     const vram = try windowVram();
     defer alloc.destroy(vram);
     const draw = [_]Command{env(0xE2, 0x1F | (0x1F << 5))} ++ texturedRectangle(.{ .w = 20, .h = 20 });
-    const bil = try shot(m, 4, vram, .true_color, .nearest, .bilinear, &draw);
+    const bil = try shot(m, 4, vram, .true_color, .nearest, .bilinear_no_edge, &draw);
     defer bil.deinit(alloc);
     const s = sidecarStats(bil, 20);
     try check(s.count > 1000, "the sprite drew nothing", .{});

@@ -29,7 +29,7 @@ const Io = std.Io;
 pub const Config = struct {
     name: []const u8 = "current",
     dither: pi.DitherMode = .true_color,
-    filter: pi.TextureFilter = .bilinear,
+    filter: pi.TextureFilter = .bilinear_no_edge,
     sprite_filter: pi.TextureFilter = .nearest,
 };
 
@@ -134,9 +134,15 @@ pub const Args = struct {
         return null;
     }
 
+    /// A filter's tag with `-` for `_`: `bilinear-no-edge`, `mmpx-advanced`.
     fn filter(v: []const u8) ?pi.TextureFilter {
-        if (std.mem.eql(u8, v, "nearest")) return .nearest;
-        if (std.mem.eql(u8, v, "bilinear")) return .bilinear;
+        for (std.enums.values(pi.TextureFilter)) |f| {
+            const tag = @tagName(f);
+            if (tag.len != v.len) continue;
+            for (tag, v) |t, c| {
+                if (c != if (t == '_') '-' else t) break;
+            } else return f;
+        }
         return null;
     }
 };

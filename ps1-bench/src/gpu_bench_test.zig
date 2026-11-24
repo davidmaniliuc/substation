@@ -4,6 +4,7 @@
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");
 const gpu_bench = @import("gpu_bench.zig");
+const pi = ps1_metal.prim_instance;
 
 const alloc = std.testing.allocator;
 const io = std.testing.io;
@@ -79,16 +80,26 @@ test "theBenchmarkArgumentsDefaultToTheShippedSettings" {
     try std.testing.expectEqualSlices(u32, &.{ 1, 4, 6, 8 }, a.scales);
     try std.testing.expectEqual(5, a.repeats);
     try std.testing.expectEqual(.true_color, a.config.dither);
-    try std.testing.expectEqual(.bilinear, a.config.filter);
+    try std.testing.expectEqual(.bilinear_no_edge, a.config.filter);
     try std.testing.expectEqual(.nearest, a.config.sprite_filter);
 
-    const b = try gpu_bench.Args.parse(alloc, &.{ "x", "--scales=2,3", "--repeats=1", "--dither=native", "--filter=nearest", "--sprite-filter=bilinear" });
+    const b = try gpu_bench.Args.parse(alloc, &.{ "x", "--scales=2,3", "--repeats=1", "--dither=native", "--filter=nearest", "--sprite-filter=bilinear-no-edge" });
     defer b.deinit(alloc);
     try std.testing.expectEqualSlices(u32, &.{ 2, 3 }, b.scales);
     try std.testing.expectEqual(1, b.repeats);
     try std.testing.expectEqual(.native, b.config.dither);
     try std.testing.expectEqual(.nearest, b.config.filter);
-    try std.testing.expectEqual(.bilinear, b.config.sprite_filter);
+    try std.testing.expectEqual(.bilinear_no_edge, b.config.sprite_filter);
+
+    for (std.enums.values(pi.TextureFilter)) |f| {
+        var flag: [64]u8 = undefined;
+        const arg = try std.fmt.bufPrint(&flag, "--filter={s}", .{@tagName(f)});
+        std.mem.replaceScalar(u8, arg["--filter=".len..], '_', '-');
+        const c = try gpu_bench.Args.parse(alloc, &.{ "x", arg });
+        defer c.deinit(alloc);
+        try std.testing.expectEqual(f, c.config.filter);
+    }
+    try std.testing.expectError(error.BadFilter, gpu_bench.Args.parse(alloc, &.{ "x", "--filter=bilinear_no_edge" }));
 
     try std.testing.expectError(error.BadScale, gpu_bench.Args.parse(alloc, &.{ "x", "--scales=9" }));
     try std.testing.expectError(error.BadDither, gpu_bench.Args.parse(alloc, &.{ "x", "--dither=pretty" }));

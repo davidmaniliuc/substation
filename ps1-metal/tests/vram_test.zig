@@ -166,8 +166,18 @@ test "theConstantsAreTheHeadersValues" {
     try std.testing.expectEqual(@as(u32, 1 << 7), prim.Flag.depth_test);
     try std.testing.expectEqual(@as(u32, 1 << 8), prim.Flag.depth_write);
     try std.testing.expectEqual(@as(u32, 3), @backingInt(prim.DitherMode.true_color));
-    try std.testing.expectEqual(@as(u32, 1), @backingInt(prim.TextureFilter.bilinear));
     try std.testing.expectEqual(prim.DitherMode.true_color, prim.default_dither);
+}
+
+test "theFilterIdsAreThePersistedValues" {
+    // The app stores these numbers, so a renumbered header silently swaps a
+    // player's filter for another.
+    const ids = [_]prim.TextureFilter{
+        .nearest,     .bilinear_no_edge, .bilinear, .jinc2, .jinc2_no_edge, .xbr,
+        .xbr_no_edge, .scale2x,          .scale3x,  .mmpx,  .mmpx_enhanced, .mmpx_advanced,
+    };
+    for (ids, 0..) |f, i| try std.testing.expectEqual(@as(u32, @intCast(i)), @backingInt(f));
+    try std.testing.expectEqual(ids.len, std.enums.values(prim.TextureFilter).len);
 }
 
 test "theNativeConstantsDoNotFollowTheScale" {
