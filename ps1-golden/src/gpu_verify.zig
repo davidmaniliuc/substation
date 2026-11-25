@@ -115,7 +115,7 @@ pub fn runWorkload(
     wl: golden.Workload,
     opts: Options,
     gpu: Metal,
-    set: *const ps1_metal.pipelines.Set,
+    set: *ps1_metal.pipelines.Set,
 ) !Result {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
