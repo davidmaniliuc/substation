@@ -42,6 +42,8 @@ pub const Flag = struct {
     pub const color_perspective: u32 = c.PS1_PRIM_COLOR_PERSPECTIVE;
     pub const depth_test: u32 = c.PS1_PRIM_DEPTH_TEST;
     pub const depth_write: u32 = c.PS1_PRIM_DEPTH_WRITE;
+    pub const field: u32 = c.PS1_PRIM_FIELD;
+    pub const field_odd: u32 = c.PS1_PRIM_FIELD_ODD;
 };
 
 /// Where the 4x4 dither pattern is sampled; `.true_color` turns dithering off

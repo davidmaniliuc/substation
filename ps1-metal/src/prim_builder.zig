@@ -37,6 +37,18 @@ pub fn base(env: DrawingEnv) PrimInstance {
     return inst;
 }
 
+/// The instance bits a record's field restriction becomes: the one place
+/// `command.rowsOf` crosses into the instance's namespace, so no per-kind
+/// builder has to remember it. Zero for every record the core did not
+/// restrict.
+pub fn fieldBits(cmd: Command) u32 {
+    return switch (command.rowsOf(cmd)) {
+        .all => 0,
+        .even => Flag.field,
+        .odd => Flag.field | Flag.field_odd,
+    };
+}
+
 /// 1/16 px relative to a base pixel, rounded.
 fn toQ(p: i32, origin: i64) i32 {
     return @intCast((@as(i64, p) - (origin << 16) + 2048) >> 12);

@@ -152,6 +152,9 @@ pub const Rasterizer = struct {
     /// it a fixture carrying an unhandled kind replays to a wrong hash with
     /// nothing to say why.
     saw_unmodelled_kind: bool = false,
+    /// The field restriction of the record being applied, which every
+    /// instance it pushes carries. Zero between records.
+    field_bits: u32 = 0,
 
     instances: std.ArrayList(PrimInstance) = .empty,
     steps: std.ArrayList(Step) = .empty,
@@ -410,6 +413,8 @@ pub const Rasterizer = struct {
             return;
         }
         if (command.isEnvKind(cmd.kind)) return command.applyEnv(cmd, &self.env);
+        self.field_bits = prim_builder.fieldBits(cmd);
+        defer self.field_bits = 0;
         switch (cmd.kind) {
             .draw_triangle => self.appendTriangle(cmd, Kind.flat_tri),
             .draw_shaded_triangle => self.appendTriangle(cmd, Kind.gouraud_tri),
@@ -448,7 +453,9 @@ pub const Rasterizer = struct {
     /// One instance on the frame's list. Allocation failure here is a
     /// programmer-level event for the same reason as in `HazardTracker`.
     pub fn pushInstance(self: *Rasterizer, inst: PrimInstance) void {
-        self.instances.append(self.alloc, inst) catch @panic("rasterizer out of memory");
+        var stamped = inst;
+        stamped.flags |= self.field_bits;
+        self.instances.append(self.alloc, stamped) catch @panic("rasterizer out of memory");
     }
 
     pub fn pushStep(self: *Rasterizer, step: Step) void {

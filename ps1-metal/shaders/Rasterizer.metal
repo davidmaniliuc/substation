@@ -122,11 +122,26 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
     return out;
 }
 
+/// Whether a field-restricted draw skips native row `ny`. Interlaced rendering
+/// skips the WHOLE native row, every sub-row of it, which keeps the top-left
+/// subtexel equal to the 1x answer and a GPU-only readback equal to the
+/// software VRAM.
+inline bool ps1_row_skipped(uint flags, int ny) {
+    if ((flags & PS1_PRIM_FIELD) == 0u) return false;
+    uint odd = (flags & PS1_PRIM_FIELD_ODD) != 0u ? 1u : 0u;
+    return (uint(ny) & 1u) != odd;
+}
+
 /// GP0(02). DELIBERATELY unmasked and NOT clipped to the drawing area:
 /// hardware ignores GP0(E6) for fills, and `vram.zig:183-198` clips only to
 /// VRAM bounds, which the encoder has already folded into the box.
 fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
-                                      const device Ps1PrimInstance* prims [[buffer(0)]]) {
+                                      const device Ps1PrimInstance* prims [[buffer(0)]],
+                                      constant Ps1RasterUniforms& uni [[buffer(2)]]) {
+    if (ps1_row_skipped(prims[in.iid].flags, int(in.position.y) / int(uni.scale))) {
+        discard_fragment();
+        return ps1_discarded();
+    }
     ushort v = ushort(prims[in.iid].color);
     // MAINTAIN, at five bits. A fill's colour is a flat 5-bit value that
     // expands exactly, so there is no extra precision to keep: the same
@@ -435,6 +450,7 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
     // px/py.
     int nx = px / s;
     int ny = py / s;
+    if (ps1_row_skipped(p.flags, ny)) { discard_fragment(); return ps1_discarded(); }
     // The dither offset, resolved ONCE and then added unconditionally: 0 is
     // the no-op, so nothing below needs a branch of its own.
     //

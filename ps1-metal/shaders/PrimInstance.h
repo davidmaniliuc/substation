@@ -43,6 +43,8 @@ enum {
 #define PS1_PRIM_COLOR_PERSPECTIVE   (1u << 6) /* record's flag_color_perspective (gpu/command.zig) */
 #define PS1_PRIM_DEPTH_TEST  (1u << 7) /* record's flag_depth_test (gpu/command.zig) */
 #define PS1_PRIM_DEPTH_WRITE (1u << 8) /* record's flag_depth_write (gpu/command.zig) */
+#define PS1_PRIM_FIELD       (1u << 9)  /* the record writes one field's rows only (command.rowsOf) */
+#define PS1_PRIM_FIELD_ODD   (1u << 10) /* with PS1_PRIM_FIELD: the odd native rows, else the even ones */
 
 typedef struct {
     int kind;
