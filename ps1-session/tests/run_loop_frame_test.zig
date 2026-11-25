@@ -158,6 +158,19 @@ test "FramePath: theVertexCacheEngineAndRewindBudgetCrossOnlyOnChange" {
     try expectEqual(2, r.m.count("applyPgxp"));
     try expectEqual(2, r.m.count("setCpuOverclock"));
     try expectEqual(2, r.m.count("setCdSpeedup"));
+    try expectEqual(2, r.m.count("setInterlacedRendering"));
+}
+
+test "FramePath: theInterlacedRenderingSwitchReachesTheMachine" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.interlaced_rendering.store(true, .release);
+    _ = r.iterate();
+    try expect(r.m.interlaced_rendering);
+    r.loop.controls.interlaced_rendering.store(false, .release);
+    _ = r.iterate();
+    try expect(!r.m.interlaced_rendering);
 }
 
 test "FramePath: aRefusedEngineIsNotRetried" {

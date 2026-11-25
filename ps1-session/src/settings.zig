@@ -51,16 +51,21 @@ pub const Settings = struct {
     /// The player's CD speedup; 1x is off. A listed game's disabled
     /// direction is forced back to 1x in the fold.
     cd_speedup: ps1_core.cdrom.speedup.Speedup = .{},
+    /// How a 480i game is shown. The machine's half is one switch: whether
+    /// it draws fields at all.
+    deinterlace: metal.deinterlace.Mode = .progressive,
 };
 
 /// What the fold decides: the PGXP switches and vertex cache the machine is
-/// given, its VRAM mode, its CPU clock and its CD speedup.
+/// given, its VRAM mode, its CPU clock, its CD speedup and whether it draws
+/// fields.
 pub const Folded = struct {
     pgxp: machine.Pgxp,
     vertex_cache: bool,
     vram: capi.VramMode,
     cpu_overclock: u32,
     cd_speedup: ps1_core.cdrom.speedup.Speedup,
+    interlaced_rendering: bool,
 };
 
 /// `readbacks` is separate from `s.vram_readbacks` because the session's
@@ -90,6 +95,7 @@ pub fn fold(
             .read = if (cd_disabled.read) .x1 else s.cd_speedup.read,
             .seek = if (cd_disabled.seek) .x1 else s.cd_speedup.seek,
         },
+        .interlaced_rendering = s.deinterlace.drawsFields(),
     };
     if (!s.use_presets) return out;
     const p = preset orelse return out;

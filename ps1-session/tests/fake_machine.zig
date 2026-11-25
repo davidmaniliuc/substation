@@ -45,6 +45,8 @@ pub const FakeMachine = struct {
     dirty_cards: [2]bool = .{ false, false },
     card_fill: u8 = 0xC4,
     frames_run: u32 = 0,
+    /// The last `setInterlacedRendering`.
+    interlaced_rendering: bool = false,
     /// Called inside `runFrame` and both VRAM copies, with `ctx` for the
     /// test.
     /// Deferred-VRAM rewind captures, as the core numbers them.
@@ -244,6 +246,11 @@ pub const FakeMachine = struct {
         _ = read;
         _ = seek;
         self.log("setCdSpeedup");
+    }
+
+    pub fn setInterlacedRendering(self: *FakeMachine, on: bool) void {
+        self.interlaced_rendering = on;
+        self.log("setInterlacedRendering");
     }
 
     pub fn setVertexCache(self: *FakeMachine, on: bool) void {

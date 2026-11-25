@@ -113,6 +113,7 @@ fn pass(self: anytype, now_ns: u64) Outcome {
     self.m.setCpuOverclock(c.cpu_overclock.load(.acquire));
     self.m.setWidescreen(c.widescreen.load(.acquire));
     self.m.setCdSpeedup(c.cd_read_speedup.load(.acquire), c.cd_seek_speedup.load(.acquire));
+    self.m.setInterlacedRendering(c.interlaced_rendering.load(.acquire));
     const want_cache = c.vertex_cache.load(.acquire);
     if (want_cache != self.applied_vertex_cache) {
         self.m.setVertexCache(want_cache);

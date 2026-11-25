@@ -104,6 +104,7 @@ pub const Ps1SessionSettings = extern struct {
     widescreen: i32,
     cd_read_speedup: i32,
     cd_seek_speedup: i32,
+    deinterlace: i32,
 };
 
 fn optSlice(p: ?[*]const u8, len: usize) ?[]const u8 {
@@ -156,6 +157,7 @@ fn settingsOf(p: ?*const Ps1SessionSettings, held: settings.Settings) ?settings.
             .read = enumOf(Factor, c.cd_read_speedup) orelse held.cd_speedup.read,
             .seek = enumOf(Factor, c.cd_seek_speedup) orelse held.cd_speedup.seek,
         },
+        .deinterlace = enumOf(metal.deinterlace.Mode, c.deinterlace) orelse held.deinterlace,
     };
 }
 

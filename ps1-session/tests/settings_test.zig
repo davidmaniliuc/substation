@@ -205,3 +205,27 @@ test "aNewSettingsValueShowsNoEffect" {
     const s: Settings = .{};
     try expectEqual(.none, s.display_effect);
 }
+
+test "theDeinterlacingModesKeepTheNumbersTheHeaderGives" {
+    const header = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "ps1-capi/include/ps1_session.h", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(header);
+    const Mode = @FieldType(Settings, "deinterlace");
+    inline for (.{
+        .{ "PS1_DEINTERLACE_PROGRESSIVE", Mode.progressive },
+        .{ "PS1_DEINTERLACE_ADAPTIVE", Mode.adaptive },
+        .{ "PS1_DEINTERLACE_BLEND", Mode.blend },
+        .{ "PS1_DEINTERLACE_WEAVE", Mode.weave },
+        .{ "PS1_DEINTERLACE_SINGLE_FIELD", Mode.single_field },
+    }) |pair| {
+        try expectEqual(@backingInt(pair[1]), try headerValue(header, pair[0]));
+    }
+    try expectEqual(5, @typeInfo(Mode).@"enum".field_names.len);
+}
+
+test "everyDeinterlacingModeButProgressiveHasTheMachineDrawFields" {
+    try expectEqual(.progressive, (Settings{}).deinterlace);
+    for (std.enums.values(@FieldType(Settings, "deinterlace"))) |mode| {
+        const f = settings.forSerial(.{ .deinterlace = mode }, .automatic, "");
+        try expectEqual(mode != .progressive, f.interlaced_rendering);
+    }
+}

@@ -75,6 +75,8 @@ pub const Controls = struct {
     /// The folded CD read and seek speedups (`Factor`), re-applied every frame.
     cd_read_speedup: Atomic(u8) = .init(1),
     cd_seek_speedup: Atomic(u8) = .init(1),
+    /// Whether the machine draws fields, re-applied every frame.
+    interlaced_rendering: Atomic(bool) = .init(false),
     /// `PS1_SOFTWARE_DISPLAY` / `PS1_LIVE_DIFF`: their readers need the
     /// shadow of every frame. Set once, before the thread starts.
     shadow_every_frame: bool = false,

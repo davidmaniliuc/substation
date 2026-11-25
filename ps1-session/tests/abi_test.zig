@@ -54,6 +54,7 @@ fn settingsValue() abi.Ps1SessionSettings {
         .widescreen = 0,
         .cd_read_speedup = 1,
         .cd_seek_speedup = 1,
+        .deinterlace = 0,
     };
 }
 
@@ -218,8 +219,8 @@ test "SessionAbi: noEventAfterFree" {
     try expectEqual(seen, rates.count.load(.acquire));
 }
 
-test "SessionAbi: theSettingsStructIsEightyBytes" {
-    try expectEqual(80, @sizeOf(abi.Ps1SessionSettings));
+test "SessionAbi: theSettingsStructIsEightyEightBytes" {
+    try expectEqual(88, @sizeOf(abi.Ps1SessionSettings));
     try expectEqual(40, @offsetOf(abi.Ps1SessionSettings, "pgxp"));
     try expectEqual(60, @offsetOf(abi.Ps1SessionSettings, "cpu_overclock"));
     // The effect took the padding the overclock left and a new eight bytes
@@ -230,6 +231,8 @@ test "SessionAbi: theSettingsStructIsEightyBytes" {
     // The two CD speedups grew the struct by one 8-byte row.
     try expectEqual(72, @offsetOf(abi.Ps1SessionSettings, "cd_read_speedup"));
     try expectEqual(76, @offsetOf(abi.Ps1SessionSettings, "cd_seek_speedup"));
+    // The deinterlacing mode grew it by another row.
+    try expectEqual(80, @offsetOf(abi.Ps1SessionSettings, "deinterlace"));
 }
 
 test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
@@ -452,4 +455,23 @@ test "SessionAbi: aSwappedInDiscForcesItsDisabledCdDirectionToOneX" {
     s.discChanged(serialOf("SLUS-00707"), .on);
     try expectEqual(@as(u8, 4), c.cd_read_speedup.load(.acquire));
     try expectEqual(@as(u8, 6), c.cd_seek_speedup.load(.acquire));
+}
+
+test "SessionAbi: theDeinterlacingReachesTheRendererAndTheMachineItsSwitch" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    try expect(!s.loop.controls.interlaced_rendering.load(.acquire));
+    p.deinterlace = 4; // PS1_DEINTERLACE_SINGLE_FIELD
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.single_field, s.player.deinterlace);
+    try expectEqual(.single_field, s.settings.deinterlace);
+    try expect(s.loop.controls.interlaced_rendering.load(.acquire));
+    p.deinterlace = 99;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.single_field, s.player.deinterlace);
+    p.deinterlace = 0;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.progressive, s.settings.deinterlace);
+    try expect(!s.loop.controls.interlaced_rendering.load(.acquire));
 }

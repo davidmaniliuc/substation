@@ -109,6 +109,15 @@ typedef struct {
 #define PS1_EFFECT_CRT            3
 #define PS1_EFFECT_COMPOSITE      4
 
+/* Ps1SessionSettings.deinterlace: how a 480-line interlaced game is shown.
+ * Every mode but Progressive has the machine draw only the field being
+ * built, as the hardware does; Progressive draws every row. */
+#define PS1_DEINTERLACE_PROGRESSIVE  0
+#define PS1_DEINTERLACE_ADAPTIVE     1
+#define PS1_DEINTERLACE_BLEND        2
+#define PS1_DEINTERLACE_WEAVE        3
+#define PS1_DEINTERLACE_SINGLE_FIELD 4
+
 /* Every setting the host owns, sent whole. An enum out of range keeps the
  * value the session holds; a scale is clamped to 1..8. */
 typedef struct {
@@ -136,6 +145,8 @@ typedef struct {
                                       * speed for double-speed data; the
                                       * session forces a listed game's to 1. */
     int32_t         cd_seek_speedup; /* 1..10, likewise for seeks. */
+    int32_t         deinterlace;     /* PS1_DEINTERLACE_*, a screenshot
+                                      * included. */
 } Ps1SessionSettings;
 
 typedef struct {

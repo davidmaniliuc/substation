@@ -136,15 +136,16 @@ pub const Pgxp = struct {
 pub const Engine = enum(u8) { interpreter = 0, cached = 1, jit = 2 };
 
 const contract = [_][]const u8{
-    "runFrame",            "readAudio",         "takeFrameStream", "display",
-    "copyVram",            "copyDepth",         "saveStateSize",   "saveState",
-    "loadState",           "snapshotMark",      "snapshotReturn",  "reset",
-    "swapDisc",            "setButtons",        "setAnalog",       "pressAnalogButton",
-    "padStatus",           "takeMemcard",       "loadMemcard",     "applyPgxp",
-    "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
-    "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
-    "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
-    "setVramMode",         "setCpuOverclock",   "setWidescreen",   "setCdSpeedup",
+    "runFrame",               "readAudio",         "takeFrameStream", "display",
+    "copyVram",               "copyDepth",         "saveStateSize",   "saveState",
+    "loadState",              "snapshotMark",      "snapshotReturn",  "reset",
+    "swapDisc",               "setButtons",        "setAnalog",       "pressAnalogButton",
+    "padStatus",              "takeMemcard",       "loadMemcard",     "applyPgxp",
+    "setVertexCache",         "setEngine",         "configureRewind", "rewindStep",
+    "rewindFramesCovered",    "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
+    "rasterState",            "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
+    "setVramMode",            "setCpuOverclock",   "setWidescreen",   "setCdSpeedup",
+    "setInterlacedRendering",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -380,6 +381,11 @@ pub const HandleMachine = struct {
     /// cross every frame.
     pub fn setCdSpeedup(self: *HandleMachine, read: u8, seek: u8) void {
         capi.ps1_set_cd_speedup(self.h, read, seek);
+    }
+
+    /// Idempotent in the core, so it crosses every frame.
+    pub fn setInterlacedRendering(self: *HandleMachine, on: bool) void {
+        capi.ps1_set_interlaced_rendering(self.h, @intFromBool(on));
     }
 
     /// Allocates or frees 83 MB: the caller crosses only a CHANGE.
