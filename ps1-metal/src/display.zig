@@ -19,7 +19,7 @@ pub const native_pixels = pi.native_pixels;
 /// Mirrors `Params` in Shaders/DisplayShader.metal. Field order and types
 /// must match exactly.
 ///
-/// Both sides are 4-byte aligned throughout, so this is 68 bytes with no
+/// Both sides are 4-byte aligned throughout, so this is 80 bytes with no
 /// padding question: pinned by `static_assert` over there and by the
 /// `comptime` below here.
 pub const Params = extern struct {
@@ -48,11 +48,29 @@ pub const Params = extern struct {
     band_mix: f32 = 0,
     uv_per_px_x: f32 = 0,
     uv_per_px_y: f32 = 0,
+    /// `deinterlace.Mode`'s raw value when the picture is rebuilt from its
+    /// fields, else 0: the texture as drawn. Only `deinterlace.picture`
+    /// sets it.
+    deint: u32 = 0,
+    /// The newest field's row parity, counted from the display's first row.
+    newest: u32 = 0,
+    /// Adaptive: 1 when the source's `reference` is an older picture to
+    /// judge motion against. Without one the picture is woven.
+    has_reference: u32 = 0,
 };
 
 comptime {
-    assert(@sizeOf(Params) == 68);
+    assert(@sizeOf(Params) == 80);
 }
+
+/// What a picture is drawn from: the render texture and its sidecar, and
+/// Adaptive's older picture. A null `reference` binds the pass's own
+/// stand-in, since every texture a fragment declares must be bound.
+pub const Source = struct {
+    vram: mtl.Texture,
+    sidecar: mtl.Texture,
+    reference: ?mtl.Texture = null,
+};
 
 /// The display mode as the producer published it, with every per-draw value
 /// (letterbox, scale, fades, band) at its default for the caller to set.
@@ -266,6 +284,10 @@ pub const DisplayPass = struct {
     picture_pipeline: mtl.RenderPipelineState,
     /// An effect's second pass, by effect; `none` has none.
     effects: std.EnumArray(Effect, ?mtl.RenderPipelineState),
+    /// Adaptive's history pictures: the woven picture at native size.
+    woven_pipeline: mtl.RenderPipelineState,
+    /// 1x1, bound where there is no reference picture.
+    no_reference: mtl.Texture,
     /// The picture an effect draws, kept while it keeps its size.
     picture: ?mtl.Texture = null,
     picture_size: [2]usize = .{ 0, 0 },
@@ -277,6 +299,8 @@ pub const DisplayPass = struct {
         errdefer pipeline.release();
         const picture_pipeline = try buildPipeline(device, lib, "picture_fragment");
         errdefer picture_pipeline.release();
+        const woven_pipeline = try buildPipeline(device, lib, "woven_fragment");
+        errdefer woven_pipeline.release();
 
         var effects = std.EnumArray(Effect, ?mtl.RenderPipelineState).initFill(null);
         errdefer for (&effects.values) |e| if (e) |pl| pl.release();
@@ -292,7 +316,22 @@ pub const DisplayPass = struct {
             .storage = .managed,
             .usage = .{ .shaderRead = true },
         });
-        return .{ .pipeline = pipeline, .shadow = shadow, .picture_pipeline = picture_pipeline, .effects = effects };
+        errdefer shadow.release();
+        const no_reference = try device.newTexture2D(.{
+            .format = .bgra8Unorm,
+            .width = 1,
+            .height = 1,
+            .storage = .private,
+            .usage = .{ .shaderRead = true },
+        });
+        return .{
+            .pipeline = pipeline,
+            .shadow = shadow,
+            .picture_pipeline = picture_pipeline,
+            .woven_pipeline = woven_pipeline,
+            .no_reference = no_reference,
+            .effects = effects,
+        };
     }
 
     /// `display_vertex` and the named fragment, into a BGRA target.
@@ -312,6 +351,8 @@ pub const DisplayPass = struct {
     pub fn deinit(self: *DisplayPass) void {
         self.dropPicture();
         for (self.effects.values) |e| if (e) |pl| pl.release();
+        self.no_reference.release();
+        self.woven_pipeline.release();
         self.picture_pipeline.release();
         self.shadow.release();
         self.pipeline.release();
@@ -351,16 +392,16 @@ pub const DisplayPass = struct {
         self.picture_size = .{ 0, 0 };
     }
 
-    /// Binds all three textures always, then draws one triangle into `target`.
+    /// Binds all four textures always, then draws one triangle into `target`.
     ///
-    /// ALL THREE bindings, always: an unbound texture2d is a Metal validation
+    /// ALL FOUR bindings, always: an unbound texture2d is a Metal validation
     /// failure, not a black pixel. The target is cleared to opaque black
     /// first, which is what the letterbox bars and a disabled display show.
     ///
     /// False where Metal handed back no encoder: that frame is skipped, as
     /// the Swift view skipped it, and nothing was encoded into `cmd`.
-    pub fn encode(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, vram: mtl.Texture, sidecar: mtl.Texture, p: Params) bool {
-        return self.drawPicture(cmd, target, .clear, self.pipeline, vram, sidecar, p);
+    pub fn encode(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, src: Source, p: Params) bool {
+        return self.drawPicture(cmd, target, .clear, self.pipeline, src, p);
     }
 
     /// `encode` with `fx` over the picture: two passes, the picture at the
@@ -369,18 +410,12 @@ pub const DisplayPass = struct {
     /// display's own `display_color`, with nothing over it, so the effect only
     /// ever sees the finished picture. `.none`, a display that is off, a
     /// picture that cannot be allocated: all fall back to `encode`.
-    pub fn encodeEffect(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, vram: mtl.Texture, sidecar: mtl.Texture, p: Params, e: EffectParams, fx: Effect) bool {
-        const pipeline = self.effects.get(fx) orelse return self.encode(cmd, target, vram, sidecar, p);
-        if (p.enabled == 0 or p.width == 0 or p.height == 0) return self.encode(cmd, target, vram, sidecar, p);
-        if (!self.ensurePicture(cmd.device(), p.width * p.scale, p.height * p.scale)) return self.encode(cmd, target, vram, sidecar, p);
+    pub fn encodeEffect(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, src: Source, p: Params, e: EffectParams, fx: Effect) bool {
+        const pipeline = self.effects.get(fx) orelse return self.encode(cmd, target, src, p);
+        if (p.enabled == 0 or p.width == 0 or p.height == 0) return self.encode(cmd, target, src, p);
+        if (!self.ensurePicture(cmd.device(), p.width * p.scale, p.height * p.scale)) return self.encode(cmd, target, src, p);
         const picture = self.picture.?;
-
-        var q = p;
-        q.scale_x = 1;
-        q.scale_y = 1;
-        q.saturation = 1;
-        q.band_mix = 0;
-        if (!self.drawPicture(cmd, picture, .dontCare, self.picture_pipeline, vram, sidecar, q)) return false;
+        if (!self.drawPicture(cmd, picture, .dontCare, self.picture_pipeline, src, bare(p))) return false;
 
         const pool = objc.Pool.push();
         defer pool.pop();
@@ -395,6 +430,29 @@ pub const DisplayPass = struct {
         return true;
     }
 
+    /// The woven picture, one texel per native pixel at its top-left
+    /// subtexel, into `target` (`p.width` x `p.height`): what Adaptive keeps
+    /// of a picture to judge the next ones' motion against.
+    pub fn encodeWoven(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, src: Source, p: Params) bool {
+        var q = bare(p);
+        q.deint = 0;
+        q.has_reference = 0;
+        var woven = src;
+        woven.reference = null;
+        return self.drawPicture(cmd, target, .dontCare, self.woven_pipeline, woven, q);
+    }
+
+    /// `p` without anything drawn over the picture: no letterbox, grey-out
+    /// or band.
+    fn bare(p: Params) Params {
+        var q = p;
+        q.scale_x = 1;
+        q.scale_y = 1;
+        q.saturation = 1;
+        q.band_mix = 0;
+        return q;
+    }
+
     fn passInto(target: mtl.Texture, load: mtl_enums.LoadAction) mtl.RenderPassDescriptor {
         const pass = mtl.RenderPassDescriptor.renderPassDescriptor();
         const colour = pass.colorAttachment(0);
@@ -405,14 +463,15 @@ pub const DisplayPass = struct {
         return pass;
     }
 
-    fn drawPicture(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, load: mtl_enums.LoadAction, pipeline: mtl.RenderPipelineState, vram: mtl.Texture, sidecar: mtl.Texture, p: Params) bool {
+    fn drawPicture(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, load: mtl_enums.LoadAction, pipeline: mtl.RenderPipelineState, src: Source, p: Params) bool {
         const pool = objc.Pool.push();
         defer pool.pop();
         const enc = cmd.renderCommandEncoder(passInto(target, load)) orelse return false;
         enc.setRenderPipelineState(pipeline);
-        enc.setFragmentTexture(vram, 0);
+        enc.setFragmentTexture(src.vram, 0);
         enc.setFragmentTexture(self.shadow, 1);
-        enc.setFragmentTexture(sidecar, 2);
+        enc.setFragmentTexture(src.sidecar, 2);
+        enc.setFragmentTexture(src.reference orelse self.no_reference, 3);
         enc.setVertexBytes(std.mem.asBytes(&p), 0);
         enc.setFragmentBytes(std.mem.asBytes(&p), 0);
         enc.drawPrimitives(.triangle, 0, 3, 1, 0);

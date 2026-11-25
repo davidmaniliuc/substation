@@ -48,7 +48,7 @@ pub fn synchronize(cmd: mtl.CommandBuffer, target: mtl.Texture) bool {
 /// (1, 1). The caller commits `cmd`, reads the texture with `bytes` once it
 /// has completed, and releases it. Null where Metal refused the target or
 /// an encoder.
-pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, vram: mtl.Texture, sidecar: mtl.Texture, p: display.Params, s: Size) ?mtl.Texture {
+pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, src: display.Source, p: display.Params, s: Size) ?mtl.Texture {
     const target = newTarget(cmd.device(), s) orelse return null;
     var q = p;
     q.scale_x = 1;
@@ -56,7 +56,7 @@ pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, vram: mtl.Text
     // The game's picture, never the paused grey-out or the toolbar band over it.
     q.saturation = 1;
     q.band_mix = 0;
-    if (!pass.encode(cmd, target, vram, sidecar, q) or !synchronize(cmd, target)) {
+    if (!pass.encode(cmd, target, src, q) or !synchronize(cmd, target)) {
         target.release();
         return null;
     }

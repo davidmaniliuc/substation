@@ -93,10 +93,10 @@ fn expectSameAtEveryScale(native: *const Image, o: Options) !void {
 }
 
 test "DisplayScale: theDisplayParamsStrideMatchesTheShaderStruct" {
-    // DisplayShader.metal carries `static_assert(sizeof(Params) == 68)`. This
+    // DisplayShader.metal carries `static_assert(sizeof(Params) == 80)`. This
     // is the other half of that pair: a field added on one side only shears
     // every field after it.
-    try expectEqual(68, @sizeOf(display.Params));
+    try expectEqual(80, @sizeOf(display.Params));
     // Never 0: the fragment shader divides by it. A default of 0 would be a
     // divide-by-zero on the very first frame after a field reorder.
     try expectEqual(1, dh.params().scale);

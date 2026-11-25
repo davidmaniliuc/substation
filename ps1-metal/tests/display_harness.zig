@@ -71,13 +71,26 @@ pub fn render(
     width: u32,
     height: u32,
 ) ![]u8 {
+    return renderSource(alloc, m, pass, .{ .vram = vram, .sidecar = sidecar }, p, width, height);
+}
+
+/// `render` from a whole `display.Source`.
+pub fn renderSource(
+    alloc: Allocator,
+    m: harness.Metal,
+    pass: *display.DisplayPass,
+    src: display.Source,
+    p: display.Params,
+    width: u32,
+    height: u32,
+) ![]u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
     const target = screenshot.newTarget(m.device, .{ .width = width, .height = height }) orelse
         return error.MetalAllocation;
     defer target.release();
     const cmd = m.queue.commandBuffer() orelse return error.NoCommandBuffer;
-    if (!pass.encode(cmd, target, vram, sidecar, p)) return error.NoEncoder;
+    if (!pass.encode(cmd, target, src, p)) return error.NoEncoder;
     if (!screenshot.synchronize(cmd, target)) return error.NoEncoder;
     cmd.commit();
     cmd.waitUntilCompleted();
@@ -106,7 +119,7 @@ pub fn renderEffect(
         return error.MetalAllocation;
     defer target.release();
     const cmd = m.queue.commandBuffer() orelse return error.NoCommandBuffer;
-    if (!pass.encodeEffect(cmd, target, vram, sidecar, p, e, fx)) return error.NoEncoder;
+    if (!pass.encodeEffect(cmd, target, .{ .vram = vram, .sidecar = sidecar }, p, e, fx)) return error.NoEncoder;
     if (!screenshot.synchronize(cmd, target)) return error.NoEncoder;
     cmd.commit();
     cmd.waitUntilCompleted();

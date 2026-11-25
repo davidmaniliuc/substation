@@ -29,5 +29,6 @@ pub const readback_desk = @import("readback_desk.zig");
 pub const capture_ring = @import("capture_ring.zig");
 pub const frame_exchange = @import("frame_exchange.zig");
 pub const display = @import("display.zig");
+pub const deinterlace = @import("deinterlace.zig");
 pub const screenshot = @import("screenshot.zig");
 pub const png = @import("png.zig");

@@ -21,9 +21,12 @@ struct Params {
     float band_mix;         // 0 hidden, 1 shown, eased with the HUD
     float uv_per_px_x;      // one drawable pixel in uv
     float uv_per_px_y;
+    uint  deint;            // deinterlace.Mode when rebuilt from fields, else 0
+    uint  newest;           // the newest field's row parity, display-relative
+    uint  has_reference;    // adaptive: texture(3) is an older picture
 };
 
-static_assert(sizeof(Params) == 68,
+static_assert(sizeof(Params) == 80,
               "Params in ps1-metal/src/display.zig must match field for field");
 
 struct VertexOut {
@@ -126,10 +129,20 @@ static float4 fetch_line(uint nx, uint line, uint sub_x, uint sub_y,
     return unpack1555(vram.read(addr).r);
 }
 
+/// `deinterlace.Mode`'s raw values for the modes that rebuild the picture.
+constant uint deint_adaptive = 1;
+constant uint deint_blend = 2;
+constant uint deint_single_field = 4;
+
+/// A channel that changed by more than this between two fields of one
+/// parity is motion.
+constant float motion_threshold = 0.08;
+
 static float4 display_color(VertexOut in,
                             texture2d<uint, access::read> vram,
                             texture2d<uint, access::read> shadow,
                             texture2d<uint, access::read> sidecar,
+                            texture2d<float, access::read> reference,
                             constant Params& p) {
     // Outside the picture: a letterbox bar.
     if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
@@ -158,7 +171,42 @@ static float4 display_color(VertexOut in,
     // only the 15bpp read of the render texture re-adds sub_x/sub_y.
     uint nx = px / p.scale, sub_x = px % p.scale;
     uint ny = py / p.scale, sub_y = py % p.scale;
-    return fetch_line(nx, ny, sub_x, sub_y, vram, shadow, sidecar, p);
+
+    // Every mode is a choice of lines. A field is a parity of NATIVE lines
+    // at every scale, and the sub-row rides along, so a scaled picture is
+    // rebuilt exactly as the 1x one is, block for block.
+    if (p.deint == deint_single_field) {
+        // The newest field's line of each pair, line-doubled.
+        uint line = min((ny & ~1u) | p.newest, p.height - 1);
+        return fetch_line(nx, line, sub_x, sub_y, vram, shadow, sidecar, p);
+    }
+    if (p.deint == deint_blend) {
+        uint a = ny & ~1u;
+        uint b = min(a + 1, p.height - 1);
+        return 0.5 * (fetch_line(nx, a, sub_x, sub_y, vram, shadow, sidecar, p)
+                      + fetch_line(nx, b, sub_x, sub_y, vram, shadow, sidecar, p));
+    }
+    float4 here = fetch_line(nx, ny, sub_x, sub_y, vram, shadow, sidecar, p);
+    // Weave, and Adaptive wherever it has nothing to rebuild: the newest
+    // field's own lines, the first and last lines, and a picture with no
+    // older one to compare against.
+    if (p.deint != deint_adaptive || (ny & 1u) == p.newest || p.has_reference == 0
+        || ny == 0 || ny + 1 >= p.height) {
+        return here;
+    }
+    // Motion is judged at each native pixel's top-left subtexel, where the
+    // reference was taken: field n against n-2 on the lines either side,
+    // n-1 against n-3 on this one.
+    float3 d = max(abs(fetch_line(nx, ny - 1, 0, 0, vram, shadow, sidecar, p).rgb
+                       - reference.read(uint2(nx, ny - 1)).rgb),
+                   abs(fetch_line(nx, ny + 1, 0, 0, vram, shadow, sidecar, p).rgb
+                       - reference.read(uint2(nx, ny + 1)).rgb));
+    d = max(d, abs(fetch_line(nx, ny, 0, 0, vram, shadow, sidecar, p).rgb
+                   - reference.read(uint2(nx, ny)).rgb));
+    if (all(d <= motion_threshold)) return here;
+    // Moving: the newest field's lines either side, averaged.
+    return 0.5 * (fetch_line(nx, ny - 1, sub_x, sub_y, vram, shadow, sidecar, p)
+                  + fetch_line(nx, ny + 1, sub_x, sub_y, vram, shadow, sidecar, p));
 }
 
 /// Where a finished picture's pixels come from. The band and the saturation
@@ -168,10 +216,11 @@ struct DirectSource {
     texture2d<uint, access::read> vram;
     texture2d<uint, access::read> shadow;
     texture2d<uint, access::read> sidecar;
+    texture2d<float, access::read> reference;
     constant Params* p;
 
     float4 at(VertexOut tap) const {
-        return display_color(tap, vram, shadow, sidecar, *p);
+        return display_color(tap, vram, shadow, sidecar, reference, *p);
     }
 };
 
@@ -257,8 +306,9 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
                                  texture2d<uint, access::read> shadow [[texture(1)]],
                                  texture2d<uint, access::read> sidecar [[texture(2)]],
+                                 texture2d<float, access::read> reference [[texture(3)]],
                                  constant Params& p [[buffer(0)]]) {
-    DirectSource src = { vram, shadow, sidecar, &p };
+    DirectSource src = { vram, shadow, sidecar, reference, &p };
     return finish(src.at(in), in, src, p);
 }
 
@@ -290,8 +340,21 @@ fragment float4 picture_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
                                  texture2d<uint, access::read> shadow [[texture(1)]],
                                  texture2d<uint, access::read> sidecar [[texture(2)]],
+                                 texture2d<float, access::read> reference [[texture(3)]],
                                  constant Params& p [[buffer(0)]]) {
-    return display_color(in, vram, shadow, sidecar, p);
+    return display_color(in, vram, shadow, sidecar, reference, p);
+}
+
+/// The woven picture at native size, one texel per native pixel at its
+/// top-left subtexel: what Adaptive keeps of a picture, read by pixel
+/// position so the subtexel is exact.
+fragment float4 woven_fragment(VertexOut in [[stage_in]],
+                               texture2d<uint, access::read> vram [[texture(0)]],
+                               texture2d<uint, access::read> shadow [[texture(1)]],
+                               texture2d<uint, access::read> sidecar [[texture(2)]],
+                               constant Params& p [[buffer(0)]]) {
+    uint2 n = uint2(in.position.xy);
+    return fetch_line(n.x, n.y, 0, 0, vram, shadow, sidecar, p);
 }
 
 constexpr sampler linear_clamp(coord::normalized, filter::linear, address::clamp_to_edge);

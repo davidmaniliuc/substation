@@ -8,6 +8,7 @@ const objc = @import("objc.zig");
 const mtl = @import("mtl.zig");
 const pi = @import("prim_instance.zig");
 const display = @import("display.zig");
+const deinterlace = @import("deinterlace.zig");
 const screenshot = @import("screenshot.zig");
 const png = @import("png.zig");
 const pipelines = @import("pipelines.zig");
@@ -42,6 +43,9 @@ pub const Settings = struct {
     display_effect: display.Effect = .none,
     /// The shape the picture is drawn at, a screenshot included.
     widescreen: Widescreen = .off,
+    /// How a 480i game drawn as fields is shown, a screenshot included.
+    /// The core's half crosses separately, through the session.
+    deinterlace: deinterlace.Mode = .progressive,
     /// The view's size in points and its backing scale: the drawable is
     /// their product, in pixels.
     size_points: [2]f64 = .{ 0, 0 },
@@ -116,6 +120,8 @@ pub const FrameRenderer = struct {
     debug: Debug,
     set: pipelines.Set,
     pass: display.DisplayPass,
+    /// Render thread only, like `pass`.
+    deinterlacer: deinterlace.Deinterlacer = .{},
     live: *LiveRenderer,
     /// What `drain` adopts when no shadow was ever published: a blank VRAM,
     /// which is what the machine powers on with.
@@ -193,6 +199,7 @@ pub const FrameRenderer = struct {
         // A completed handler can still be running after the wait.
         while (self.shots_in_flight.load(.acquire) != 0) std.Thread.yield() catch {};
         self.live.deinit();
+        self.deinterlacer.release();
         self.pass.deinit();
         self.set.deinit();
         self.alloc.destroy(self.blank);
@@ -281,8 +288,13 @@ pub const FrameRenderer = struct {
 
         if (s.display_effect == .none) self.pass.dropPicture();
         const fx = display.effectParams(p, self.drawable_px);
-        if (!self.pass.encodeEffect(cmd, drawable.texture(), self.live.vram.texture, self.live.vram.sidecar, p, fx, s.display_effect)) return;
-        self.encodeScreenshots(cmd, p);
+        const src = self.pictureSource(cmd, &p);
+        if (!self.pass.encodeEffect(cmd, drawable.texture(), src, p, fx, s.display_effect)) {
+            // A history picture may be in the command buffer just dropped.
+            self.deinterlacer.history.clear();
+            return;
+        }
+        self.encodeScreenshots(cmd, p, src);
         cmd.presentDrawable(drawable);
         self.commit(cmd);
         _ = self.presented.fetchAdd(1, .monotonic);
@@ -333,12 +345,22 @@ pub const FrameRenderer = struct {
         return p;
     }
 
+    /// What the picture is drawn from this present, with `p`'s
+    /// deinterlacing set: a present and the screenshots after it ask for the
+    /// same picture, and the second asking draws nothing.
+    fn pictureSource(self: *FrameRenderer, cmd: mtl.CommandBuffer, p: *display.Params) display.Source {
+        const src: display.Source = .{ .vram = self.live.vram.texture, .sidecar = self.live.vram.sidecar };
+        return self.deinterlacer.prepare(cmd, &self.pass, self.current.deinterlace, src, p, self.live.shown());
+    }
+
     /// A screenshot without a present: its own command buffer.
     fn takeScreenshots(self: *FrameRenderer) void {
         // Held, like `present`, until the frame completes.
         if (self.live.mid_frame or self.pendingRequests() == 0) return;
         const cmd = self.cmd_queue.commandBuffer() orelse return self.failPendingScreenshots();
-        self.encodeScreenshots(cmd, self.pictureParams());
+        var p = self.pictureParams();
+        const src = self.pictureSource(cmd, &p);
+        self.encodeScreenshots(cmd, p, src);
         self.commit(cmd);
     }
 
@@ -351,13 +373,13 @@ pub const FrameRenderer = struct {
 
     /// Draws the picture once more, unletterboxed at the internal
     /// resolution, for every request queued, answered when the GPU is done.
-    fn encodeScreenshots(self: *FrameRenderer, cmd: mtl.CommandBuffer, p: display.Params) void {
+    fn encodeScreenshots(self: *FrameRenderer, cmd: mtl.CommandBuffer, p: display.Params, src: display.Source) void {
         var taken: [max_requests]Request = undefined;
         const requests = self.takeRequests(&taken);
         if (requests.len == 0) return;
         const shot = self.alloc.create(Shot) catch return answerAll(requests, null);
         const s = screenshot.size(p.height, p.scale, p.enabled != 0, self.current.widescreen.ratio());
-        const target = screenshot.encode(cmd, &self.pass, self.live.vram.texture, self.live.vram.sidecar, p, s) orelse {
+        const target = screenshot.encode(cmd, &self.pass, src, p, s) orelse {
             self.alloc.destroy(shot);
             return answerAll(requests, null);
         };

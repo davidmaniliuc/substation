@@ -75,7 +75,7 @@ test "Screenshot: theOffscreenPassDrawsThePicture [validate]" {
     const pool = objc.Pool.push();
     defer pool.pop();
     const cmd = m.queue.commandBuffer() orelse return error.NoCommandBuffer;
-    const target = screenshot.encode(cmd, &pass, vram, sidecar, p, .{ .width = 320, .height = 240 }) orelse
+    const target = screenshot.encode(cmd, &pass, .{ .vram = vram, .sidecar = sidecar }, p, .{ .width = 320, .height = 240 }) orelse
         return error.NoTarget;
     defer target.release();
     cmd.commit();
@@ -144,7 +144,7 @@ test "Screenshot: aScreenshotBlockOutlivesTheRendererThatAskedForIt" {
         defer pool.pop();
         const cmd = (m.queue.commandBuffer() orelse return error.NoCommandBuffer).retain();
         errdefer cmd.release();
-        const target = screenshot.encode(cmd, &pass, live.vram.texture, live.vram.sidecar, p, s) orelse
+        const target = screenshot.encode(cmd, &pass, .{ .vram = live.vram.texture, .sidecar = live.vram.sidecar }, p, s) orelse
             return error.NoTarget;
         ctx.* = .{ .alloc = alloc, .target = target };
         // The literal lives for this call only; the command buffer copies it.

@@ -427,3 +427,33 @@ test "FrameRenderer: theEffectsPictureIsHeldOnlyWhileAnEffectIsShown" {
     try expect(b.r.pass.picture == null);
     try expectEqual(3, b.r.presented.load(.monotonic));
 }
+
+/// A 480i frame drawn as fields: the older field blue on every row, then the
+/// newest red on the odd rows only.
+fn fieldFrame() [2]Command {
+    var newest = lh.fillRect(0, 0, 320, 480, 0x001F);
+    @import("ps1_core").gpu.command.restrict(&newest, .odd);
+    return .{ lh.fillRect(0, 0, 320, 480, 0x7C00), newest };
+}
+
+/// Rows 0 and 1 of the screenshot `deinterlace` takes of `fieldFrame`.
+fn fieldShot(mode: ps1_metal.deinterlace.Mode) ![2][3]u8 {
+    var b = try Bench.init(.{ .deinterlace = mode });
+    defer b.deinit();
+    b.publish(1, &fieldFrame(), .{ .width = 320, .height = 480, .enabled = true });
+    var a: Answers = .{};
+    defer a.deinit();
+    b.r.requestScreenshot(Answers.done, &a);
+    b.r.executeArrived();
+    try harness.awaitHandler(&a.count, "fieldShot");
+    while (b.r.shots_in_flight.load(.acquire) != 0) try std.Thread.yield();
+    const file = a.file orelse return error.NoScreenshot;
+    return .{ (try image_io.decodePng(file, 100, 0)).px, (try image_io.decodePng(file, 100, 1)).px };
+}
+
+test "FrameRenderer: aScreenshotShowsThePictureDeinterlaced [validate]" {
+    const red: [3]u8 = .{ 255, 0, 0 };
+    const blue: [3]u8 = .{ 0, 0, 255 };
+    try expectEqual([2][3]u8{ blue, red }, try fieldShot(.weave));
+    try expectEqual([2][3]u8{ red, red }, try fieldShot(.single_field));
+}
