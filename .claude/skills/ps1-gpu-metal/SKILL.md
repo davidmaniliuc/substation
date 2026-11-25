@@ -1583,6 +1583,50 @@ and 2x with the next two frames speculated after every frame; the settled
 texture must hash as a plain replay's after every frame, and the sidecars must
 match at the end. With the restore disabled it fails on all four fixtures.
 
+## Deinterlacing (2026-11-25)
+
+`Video ▸ Deinterlacing`: Progressive (the default), Adaptive, Blend, Weave,
+Single Field. Every mode but Progressive turns on interlaced rendering: in
+480i while GP0(E1) bit 10 is clear, every draw and fill skips the rows of the
+field being scanned out, as the hardware does, so at the end of a frame the
+texture holds the newest field and the one before it, woven.
+
+- **The field rides on the record** (`flag_field`, `flag_field_odd`, decided
+  in `Gpu.drawRows` when the word executes) and on the Metal instance
+  (`PS1_PRIM_FIELD`, `PS1_PRIM_FIELD_ODD`). The skip is per NATIVE row, so
+  every subtexel of a skipped row stays unpainted at every scale. Uploads and
+  copies write every row.
+- **The display never asks the core which field is newest.** The render
+  thread reads it off the records it executed (`command.lastRows`) into
+  `LiveRenderer.Shown`: a GPU-only frame's chunks fold, and an adopted shadow,
+  a rebuild or a frame that drew no field show `.all`, the picture as drawn. A
+  speculative group has its own `Shown`; its slots do not mark frame ends, so
+  its newest field draw decides.
+- **Every mode is a choice of lines in `display_color`**, over one
+  `fetch_line` that keeps the 24bpp packing, the seam, the sidecar and the
+  five-bit expansion. Single Field shows the newest field's line of each pair;
+  Blend averages the pair; Adaptive keeps the newest field's lines and, for
+  the others, weaves where the picture holds still and averages the lines
+  either side where a channel moved by more than 0.08. `Params.deint` 0 is
+  the picture as drawn, which is Progressive and Weave alike.
+- **Adaptive compares against one older picture**, the woven picture two
+  shown before in steady play, which holds fields n-2 and n-3 at the rows n
+  and n-1 occupy. `Deinterlacer` keeps three native `bgra8Unorm` pictures,
+  drawn by `woven_fragment` at each pixel's top-left subtexel (read from the
+  fragment's position, so the subtexel is exact), and the motion test reads
+  the live picture at the same subtexel. A uv-derived sample landed a
+  subtexel off under float rounding and read as motion. The history moves only
+  on a new `Shown.id`, is cleared by any present that rebuilds nothing, and
+  is freed in every other mode. texture(3) is always bound, to the pass's 1x1
+  stand-in when there is no reference.
+- **Gates:** `deinterlace_test` (each mode against a CPU reference on a
+  two-field VRAM at 1x and 3x, the 0.08 boundary at 20 and 21 levels, and the
+  history through `Deinterlacer.prepare`), `deinterlace_plan_test` (pure),
+  the `Shown` cases in `live_renderer_test`, and a FrameRenderer screenshot
+  under Weave and Single Field; the rasterizer's half is `field_test`, from
+  hand-built records. No fixture carries a field record, so none of the
+  corpus gates sees this path. Not hand-checked on a real 480i game.
+
 ## GPU-only VRAM (2026-10-26)
 
 A machine
