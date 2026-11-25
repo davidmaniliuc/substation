@@ -18,6 +18,7 @@ const stream_queue = @import("stream_queue.zig");
 const MetalVram = @import("metal_vram.zig").MetalVram;
 const Rasterizer = @import("rasterizer.zig").Rasterizer;
 const pipelines = @import("pipelines.zig");
+const gpu = @import("ps1_core").gpu;
 
 const Allocator = std.mem.Allocator;
 const Display = stream_queue.Display;
@@ -63,6 +64,20 @@ pub const DiffReport = struct {
             self.seq, self.differing, self.first_x, self.first_y, self.gpu, self.shadow,
         });
     }
+};
+
+/// The picture in the texture, as the display needs to know it.
+pub const Shown = struct {
+    /// Changes exactly when the texture starts showing another picture: a
+    /// real frame completes, a shadow is adopted, a speculative group goes up
+    /// or comes down, the VRAM is rebuilt. An equal id is the SAME picture,
+    /// which is what lets a paused redraw or a 120 Hz repeat leave the
+    /// deinterlacer's history alone.
+    id: u64 = 0,
+    /// The rows the picture's newest frame drew, in absolute VRAM parity.
+    /// `.all` when it drew whole or drew nothing: there is nothing to
+    /// reconstruct either way.
+    rows: gpu.Rows = .all,
 };
 
 /// Decisions between running tallies. About five seconds at 60 Hz, often
@@ -114,6 +129,15 @@ pub const LiveRenderer = struct {
     /// speculative group is in the texture: a game that flips buffers draws
     /// its future frame somewhere the real frame's display does not point.
     present_display: ?Display = null,
+
+    /// The real timeline's picture, and the speculative group's while one is
+    /// up: `shown` is what a present shows.
+    real: Shown = .{},
+    speculative: ?Shown = null,
+    /// The rows of the seq being executed, folded across its slots: a
+    /// GPU-only frame can arrive in several.
+    frame_rows: ?gpu.Rows = null,
+    next_id: u64 = 1,
 
     /// How many frames the oracle actually compared, and how many it
     /// declined to.
@@ -201,6 +225,9 @@ pub const LiveRenderer = struct {
         self.rasterizer.on_commit = old.on_commit;
         self.pending_restore = null;
         self.present_display = null;
+        // The carried picture is native and replicated: another picture.
+        self.speculative = null;
+        self.real = .{ .id = self.newId() };
     }
 
     /// The whole native VRAM (and the depth plane, while both sides keep one)
@@ -345,6 +372,10 @@ pub const LiveRenderer = struct {
         // region with it, so there is nothing left to put back.
         self.pending_restore = null;
         self.present_display = null;
+        self.speculative = null;
+        // A shadow carries no field: shown as it is until a stream says more.
+        self.real = .{ .id = self.newId() };
+        self.frame_rows = null;
         // TEMPORARY probe (2026-09-04). Remove with the fix.
         const adopt_t = if (self.options.stats) now() else 0;
         self.vram.uploadNative(s.pixels);
@@ -390,8 +421,11 @@ pub const LiveRenderer = struct {
         // hold again first.
         self.settleSpeculation();
         self.replay(slot);
+        self.frame_rows = rowsOf(slot) orelse self.frame_rows;
         self.mid_frame = !slot.final;
         if (self.mid_frame) return;
+        self.real = .{ .id = self.newId(), .rows = self.frame_rows orelse .all };
+        self.frame_rows = null;
         self.last_executed_seq = slot.seq;
         self.consumed_seq = slot.seq;
         self.captures.serve(slot.seq, self.captureSource());
@@ -427,9 +461,16 @@ pub const LiveRenderer = struct {
             self.vram.saveRegion(region);
             self.pending_restore = region;
         }
-        for (group.frames()) |*slot| self.replay(slot);
+        // A group's slots do not mark where one frame ends (a GPU-only flush
+        // appends a chunk as a slot), so its newest field draw decides.
+        var rows: ?gpu.Rows = null;
+        for (group.frames()) |*slot| {
+            self.replay(slot);
+            rows = rowsOf(slot) orelse rows;
+        }
         self.rasterizer.setState(saved);
         self.present_display = group.display;
+        self.speculative = .{ .id = self.newId(), .rows = rows orelse .all };
     }
 
     /// Puts the real timeline back in the texture. Public for the
@@ -438,6 +479,21 @@ pub const LiveRenderer = struct {
         if (self.pending_restore) |r| self.vram.restoreRegion(r);
         self.pending_restore = null;
         self.present_display = null;
+        // The real picture is back: shown again, so a new id.
+        if (self.speculative != null) {
+            self.speculative = null;
+            self.real.id = self.newId();
+        }
+    }
+
+    /// The picture a present shows.
+    pub fn shown(self: *const LiveRenderer) Shown {
+        return self.speculative orelse self.real;
+    }
+
+    fn newId(self: *LiveRenderer) u64 {
+        defer self.next_id += 1;
+        return self.next_id;
     }
 
     /// A native rect of the REAL timeline: `colour` (and `depth`) are the
@@ -616,6 +672,10 @@ pub const LiveRenderer = struct {
         st.* = .{ .window_t = t, .published = published, .dropped = dropped };
     }
 };
+
+fn rowsOf(slot: *const StreamSlot) ?gpu.Rows {
+    return gpu.command.lastRows(slot.records[0..slot.record_count]);
+}
 
 fn avgMs(ns: u64, n: usize) f64 {
     return @as(f64, @floatFromInt(ns)) / 1e6 / @as(f64, @floatFromInt(@max(n, 1)));

@@ -541,3 +541,170 @@ test "LiveRenderer: adoptingAShadowAdoptsItsState" {
     try expectEqual(0, back[40]);
     try expect(back[100] != 0);
 }
+
+const gpu = @import("ps1_core").gpu;
+const Command = gpu.command.Command;
+
+/// A 16x16 fill restricted to `rows`, as the core records one under
+/// interlaced rendering.
+fn fieldFill(rows: gpu.Rows) Command {
+    var c = lh.fillRect(0, 0, 16, 16, 0x001F);
+    gpu.command.restrict(&c, rows);
+    return c;
+}
+
+fn frame(records: []const Command) gpu.command.Stream {
+    return .{ .records = records, .payload = &.{}, .complete = true };
+}
+
+test "LiveRenderer: aFrameDrawnAsAFieldIsShownWithItsRowsUnderANewId" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    lh.publish(q, 1, &.{fieldFill(.odd)});
+    live.drain(q, &shadow);
+    const first = live.shown();
+    try expectEqual(gpu.Rows.odd, first.rows);
+
+    lh.publish(q, 2, &.{fieldFill(.even)});
+    live.drain(q, &shadow);
+    const second = live.shown();
+    try expectEqual(gpu.Rows.even, second.rows);
+    try expect(second.id != first.id);
+
+    // Nothing new: the same picture, so the same id.
+    live.drain(q, &shadow);
+    try expectEqual(second, live.shown());
+}
+
+test "LiveRenderer: aFrameThatDrawsWholeOrDrawsNothingIsShownAsDrawn" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    lh.publish(q, 1, &.{fieldFill(.odd)});
+    live.drain(q, &shadow);
+    // An unrestricted draw after a field one: GP0(E1) bit 10 set mid-frame.
+    lh.publish(q, 2, &.{ fieldFill(.odd), lh.fillRect(0, 0, 4, 4, 0x7C00) });
+    live.drain(q, &shadow);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+
+    lh.publish(q, 3, &.{fieldFill(.odd)});
+    live.drain(q, &shadow);
+    const before = live.shown().id;
+    // A frame of a copy only: it drew no field.
+    lh.publish(q, 4, &.{lh.copyRect(0, 0, 64, 0, 16, 16)});
+    live.drain(q, &shadow);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+    try expect(live.shown().id != before);
+}
+
+test "LiveRenderer: aGpuOnlyFrameFoldsItsRowsAcrossItsChunks" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    const start = live.shown();
+    q.publishChunk(1, frame(&.{fieldFill(.odd)}));
+    live.drain(q, &shadow);
+    // Part of a frame is no picture yet.
+    try expectEqual(start, live.shown());
+
+    lh.publish(q, 1, &.{lh.copyRect(0, 0, 64, 0, 16, 16)});
+    live.drain(q, &shadow);
+    try expectEqual(gpu.Rows.odd, live.shown().rows);
+    try expect(live.shown().id != start.id);
+
+    // The fold ends with its frame: the next one starts from nothing.
+    lh.publish(q, 2, &.{lh.copyRect(0, 0, 64, 0, 16, 16)});
+    live.drain(q, &shadow);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+}
+
+test "LiveRenderer: anAdoptedShadowIsShownWholeUnderANewId" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var none: lh.Shadow = .{};
+
+    lh.publish(q, 1, &.{fieldFill(.odd)});
+    live.drain(q, &none);
+    const before = live.shown();
+
+    q.requestResync();
+    var shadow: lh.Shadow = .{ .seq = 1 };
+    live.drain(q, &shadow);
+    try expectEqual(1, shadow.calls);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+    try expect(live.shown().id != before.id);
+}
+
+test "LiveRenderer: aSpeculativeGroupIsShownUnderItsOwnIdAndRows" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    _ = q.stage(1, frame(&.{fieldFill(.odd)}));
+    q.beginSpeculativeGroup(1);
+    q.appendSpeculative(frame(&.{fieldFill(.even)}));
+    q.commitSpeculativeGroup(.{});
+    q.commitStaged();
+    live.drain(q, &shadow);
+    const ahead = live.shown();
+    try expectEqual(gpu.Rows.even, ahead.rows);
+    try expectEqual(gpu.Rows.odd, live.real.rows);
+    try expect(ahead.id != live.real.id);
+
+    // Coming down shows the real picture again: a third picture on screen.
+    live.settleSpeculation();
+    const back = live.shown();
+    try expectEqual(gpu.Rows.odd, back.rows);
+    try expect(back.id != ahead.id);
+
+    // A group that draws no field is shown as drawn.
+    _ = q.stage(2, frame(&.{fieldFill(.odd)}));
+    q.beginSpeculativeGroup(2);
+    q.appendSpeculative(frame(&.{lh.copyRect(0, 0, 64, 0, 16, 16)}));
+    q.commitSpeculativeGroup(.{});
+    q.commitStaged();
+    live.drain(q, &shadow);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+    try expect(live.speculative != null);
+}
+
+test "LiveRenderer: aRebuiltVramIsShownWholeUnderANewId" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    lh.publish(q, 1, &.{fieldFill(.odd)});
+    live.drain(q, &shadow);
+    const before = live.shown();
+    try live.rebuildVram(2, false);
+    try expectEqual(gpu.Rows.all, live.shown().rows);
+    try expect(live.shown().id != before.id);
+}
