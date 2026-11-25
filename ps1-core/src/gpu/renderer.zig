@@ -1,5 +1,6 @@
 const std = @import("std");
 const Vram = @import("vram.zig").Vram;
+const Rows = @import("vram.zig").Rows;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const constants = @import("../constants.zig");
 const Color = @import("color.zig");
@@ -238,6 +239,7 @@ pub const Renderer = struct {
         comptime Shader: type,
         shader_ctx: anytype,
         depth: DepthTest,
+        rows: Rows,
     ) void {
         const x0 = p0.x;
         const y0 = p0.y;
@@ -348,7 +350,13 @@ pub const Renderer = struct {
         const whole: Lanes = @splat(q_bias_scale);
 
         var py = min_y;
-        while (py <= max_y) : (py += 1) {
+        while (py <= max_y) : ({
+            py += 1;
+            row0 += dw0dy;
+            row1 += dw1dy;
+            row2 += dw2dy;
+        }) {
+            if (!rows.draws(py)) continue;
             var w0 = row0;
             var w1 = row1;
             var w2 = row2;
@@ -408,10 +416,6 @@ pub const Renderer = struct {
                     }
                 }
             }
-
-            row0 += dw0dy;
-            row1 += dw1dy;
-            row2 += dw2dy;
         }
     }
 
@@ -424,8 +428,9 @@ pub const Renderer = struct {
         color: u16,
         is_transparent: bool,
         depth: DepthTest,
+        rows: Rows,
     ) void {
-        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.MonoShader, shaders.MonoShader{ .color = color }, depth);
+        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.MonoShader, shaders.MonoShader{ .color = color }, depth, rows);
     }
 
     pub fn drawShadedTriangle(
@@ -441,6 +446,7 @@ pub const Renderer = struct {
         rw: [3]i32,
         perspective_color: bool,
         depth: DepthTest,
+        rows: Rows,
     ) void {
         rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.ShadedShader, shaders.ShadedShader{
             .r = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
@@ -449,10 +455,10 @@ pub const Renderer = struct {
             .rw = rw,
             .perspective = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
-        }, depth);
+        }, depth, rows);
     }
 
-    pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i32, h: i32, color: u16, is_transparent: bool) void {
+    pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i32, h: i32, color: u16, is_transparent: bool, rows: Rows) void {
         // Same refusal the polygon and line paths apply: a rectangle 1024 or
         // more wide, or 512 or more tall, is dropped rather than clipped. The
         // GP0 size field is 16 bits, so nothing else bounds it.
@@ -461,6 +467,7 @@ pub const Renderer = struct {
         const oy: i32 = env.getOffsetY();
         var yy: i32 = 0;
         while (yy < h) : (yy += 1) {
+            if (!rows.draws(@as(i32, y) + yy + oy)) continue;
             var xx: i32 = 0;
             while (xx < w) : (xx += 1) {
                 const px = @as(i32, x) + xx + ox;
@@ -471,16 +478,17 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn drawLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, x1: i16, y1: i16, color: u16, is_transparent: bool) void {
+    pub fn drawLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, x1: i16, y1: i16, color: u16, is_transparent: bool, rows: Rows) void {
         const ox = env.getOffsetX();
         const oy = env.getOffsetY();
         var walk = LineWalk.init(x0 + ox, y0 + oy, x1 + ox, y1 + oy) orelse return;
         while (walk.next()) |s| {
+            if (!rows.draws(s.y)) continue;
             _ = putPixel(vram, env, @intCast(s.x), @intCast(s.y), color, is_transparent);
         }
     }
 
-    pub fn drawShadedLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, c0: u32, x1: i16, y1: i16, c1: u32, is_transparent: bool) void {
+    pub fn drawShadedLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, c0: u32, x1: i16, y1: i16, c1: u32, is_transparent: bool, rows: Rows) void {
         const ox = env.getOffsetX();
         const oy = env.getOffsetY();
         var walk = LineWalk.init(x0 + ox, y0 + oy, x1 + ox, y1 + oy) orelse return;
@@ -500,6 +508,7 @@ pub const Renderer = struct {
         // what a Phase B shader would need. The old code accumulated an f32
         // (r1 - r0) / steps and drifted below the true value along the span.
         while (walk.next()) |s| {
+            if (!rows.draws(s.y)) continue;
             var r = r0;
             var g = g0;
             var b = b0;
@@ -546,6 +555,7 @@ pub const Renderer = struct {
         perspective_texture: bool,
         perspective_color: bool,
         depth: DepthTest,
+        rows: Rows,
     ) void {
         rasterizeTriangle(vram, env, v0.point, v1.point, v2.point, allow_transparency, shaders.TexturedShader, shaders.TexturedShader{
             .vram = vram,
@@ -570,7 +580,7 @@ pub const Renderer = struct {
             // of the record rather than a per-pixel decision about geometry.
             .perspective_texture = perspective_texture and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
             .perspective_color = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
-        }, depth);
+        }, depth, rows);
     }
 
     pub fn drawTexturedRectangle(
@@ -587,6 +597,7 @@ pub const Renderer = struct {
         tpage: u16,
         allow_transparency: bool,
         opcode: u8,
+        rows: Rows,
     ) void {
         // Same refusal the polygon and line paths apply: a rectangle 1024 or
         // more wide, or 512 or more tall, is dropped rather than clipped. The
@@ -605,6 +616,7 @@ pub const Renderer = struct {
 
         var yy: i32 = 0;
         while (yy < h) : (yy += 1) {
+            if (!rows.draws(@as(i32, y) + yy + oy)) continue;
             var xx: i32 = 0;
             while (xx < w) : (xx += 1) {
                 const px = @as(i32, x) + xx + ox;

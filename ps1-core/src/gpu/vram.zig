@@ -13,6 +13,24 @@ pub const Mask = struct {
     }
 };
 
+/// The rows a draw writes. In 480-line interlaced mode, with drawing to the
+/// displayed field forbidden (GP0(E1) bit 10 clear), the GPU skips every
+/// line of the field being scanned out, so a draw lands on the other field's
+/// rows alone. Primitives and fills honour it; uploads and copies do not.
+pub const Rows = enum {
+    all,
+    even,
+    odd,
+
+    pub inline fn draws(self: Rows, y: i32) bool {
+        return switch (self) {
+            .all => true,
+            .even => y & 1 == 0,
+            .odd => y & 1 == 1,
+        };
+    }
+};
+
 pub const Vram = struct {
     data: [constants.vram_width * constants.vram_height]u16 = @splat(0),
 
@@ -197,11 +215,12 @@ pub const Vram = struct {
         }
     }
 
-    pub fn fillRectangle(self: *Vram, x: i16, y: i16, w: i16, h: i16, color: u16) void {
+    pub fn fillRectangle(self: *Vram, x: i16, y: i16, w: i16, h: i16, color: u16, rows: Rows) void {
         const max_w = constants.vram_width;
         const max_h = constants.vram_height;
         var yy: i16 = 0;
         while (yy < h) : (yy += 1) {
+            if (!rows.draws(y + yy)) continue;
             var xx: i16 = 0;
             while (xx < w) : (xx += 1) {
                 const px = x + xx;

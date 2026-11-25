@@ -68,7 +68,7 @@ test "LineWalk: the walk visits what drawLine paints" {
         const y0 = rnd.intRangeAtMost(i16, -1100, 1100);
         const x1 = rnd.intRangeAtMost(i16, -1100, 1100);
         const y1 = rnd.intRangeAtMost(i16, -1100, 1100);
-        Renderer.drawLine(vram, &env, x0, y0, x1, y1, 0x7FFF, false);
+        Renderer.drawLine(vram, &env, x0, y0, x1, y1, 0x7FFF, false, .all);
 
         var expected = try std.testing.allocator.alloc(bool, constants.vram_width * constants.vram_height);
         defer std.testing.allocator.free(expected);

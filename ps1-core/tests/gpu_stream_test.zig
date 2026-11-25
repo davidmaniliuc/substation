@@ -1538,3 +1538,92 @@ test "WriteCursor: fromVramMatchesTheCursorTheStreamBuilt" {
     try std.testing.expect(!want.active);
     try std.testing.expectEqual(want, WriteCursor.fromVram(vram));
 }
+
+const Rows = ps1_core.gpu.Rows;
+
+/// Puts the GPU in 480i, not in vblank, with interlaced rendering on and
+/// drawing to the displayed field forbidden. VRAM row 0 is the top of the
+/// picture, so the frame's field `even_field` shows the odd rows and a draw
+/// takes the even ones, and the other way about.
+fn interlace(c: *StreamCase, even_field: bool) void {
+    c.gpu.interlaced_rendering = true;
+    c.gpu.disp_env.display_mode = 0x24;
+    c.gpu.is_even_field = even_field;
+    c.gpu.is_vblank = false;
+}
+
+/// Writes one command's words with the debt cleared before each, so the FIFO
+/// runs every word as it arrives and the field it reads is the one just set.
+fn issue(c: *StreamCase, words: []const u32) void {
+    for (words) |w| {
+        c.gpu.cycle_debt = 0;
+        c.gp0(w);
+    }
+}
+
+fn fullAreaNow(c: *StreamCase) void {
+    issue(c, &.{ 0xE3000000, 0xE407FFFF, 0xE5000000 });
+}
+
+test "Stream: interlaced rendering stamps draws and fills, never uploads or copies" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    fullAreaNow(&c);
+    interlace(&c, true);
+
+    issue(&c, &.{ 0x02FFFFFF, xy(0, 0), xy(16, 8) }); // fill
+    issue(&c, &.{ 0x60FFFFFF, xy(32, 0), xy(16, 8) }); // rectangle
+    issue(&c, &.{ 0x40FFFFFF, xy(0, 20), xy(30, 40) }); // line
+    issue(&c, &.{ 0x20FF00FF, xy(0x10, 0x10), xy(0x40, 0x10), xy(0x28, 0x40) }); // triangle
+    issue(&c, &.{ 0x80000000, xy(0, 0), xy(64, 16), xy(8, 8) }); // copy
+    issue(&c, &.{ 0xA0000000, xy(0x40, 0x10), xy(4, 2), 0x12345678, 0x9ABCDEF0, 0x12345678, 0x9ABCDEF0 }); // upload
+
+    const frame = c.gpu.sink.rec.takeFrame();
+    var stamped: usize = 0;
+    for (frame.records) |rec| {
+        if (command.isFieldKind(rec.kind)) {
+            stamped += 1;
+            try std.testing.expectEqual(Rows.even, command.rowsOf(rec));
+        } else {
+            try std.testing.expectEqual(Rows.all, command.rowsOf(rec));
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 4), stamped);
+    try std.testing.expectEqual(@as(?Rows, .even), command.lastRows(frame.records));
+}
+
+test "Stream: with the setting off no record carries a field bit" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    fullAreaNow(&c);
+    interlace(&c, true);
+    c.gpu.interlaced_rendering = false;
+
+    issue(&c, &.{ 0x02FFFFFF, xy(0, 0), xy(16, 8) });
+    issue(&c, &.{ 0x60FFFFFF, xy(32, 0), xy(16, 8) });
+
+    const frame = c.gpu.sink.rec.takeFrame();
+    try std.testing.expect(command.lastRows(frame.records) != null);
+    for (frame.records) |rec| try std.testing.expectEqual(@as(u8, 0), rec.flags);
+    try std.testing.expectEqual(@as(?Rows, .all), command.lastRows(frame.records));
+}
+
+test "Stream: field-restricted draws of both parities round-trip" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    uploadPattern(&c, 0x100, 0x100, 64, 32, 0x2000);
+    c.drain();
+
+    interlace(&c, false);
+    issue(&c, &.{ 0x02FFFFFF, xy(0, 0), xy(32, 32) });
+    issue(&c, &.{ 0x300000FF, xy(0x10, 0x10), 0x0000FF00, xy(0x50, 0x10), 0x00FF0000, xy(0x30, 0x50) });
+    issue(&c, &.{ 0x50FF0000, xy(0, 70), 0x0000FF00, xy(60, 90) });
+
+    interlace(&c, true);
+    issue(&c, &.{ 0x60FFFFFF, xy(40, 100), xy(30, 30) });
+    issue(&c, &.{ 0x2800FF00, xy(0x60, 0x60), xy(0xA0, 0x60), xy(0x60, 0xA0), xy(0xA0, 0xA0) });
+    issue(&c, &.{ 0x02001F00, xy(70, 120), xy(16, 8) });
+
+    try c.expectIdentical();
+}

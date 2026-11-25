@@ -763,7 +763,7 @@ test "Phase0: triangle honours the drawing area on every side" {
     gpu.draw_env.area_top_left = 10 | (10 << 10);
     gpu.draw_env.area_bot_right = 20 | (20 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x7FFF, false, .{});
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x7FFF, false, .{}, .all);
 
     // Inside the area: painted. Outside on each side: untouched.
     try std.testing.expect(gpu.vram.data[15 * 1024 + 12] != 0);
@@ -781,7 +781,7 @@ test "Phase0: triangle check-mask skips pixels whose bit15 is set" {
     gpu.vram.data[5 * 1024 + 5] = 0x8000; // masked destination
     gpu.vram.data[6 * 1024 + 5] = 0x0000; // unmasked destination
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{});
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{}, .all);
 
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[5 * 1024 + 5]);
     try expectEqual(@as(u16, 0x1234), gpu.vram.data[6 * 1024 + 5]);
@@ -792,7 +792,7 @@ test "Phase0: triangle set-mask ORs bit15 into every pixel written" {
     envFullArea(&gpu);
     gpu.draw_env.mask_bit = 1; // set only
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{});
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{}, .all);
 
     try expectEqual(@as(u16, 0x9234), gpu.vram.data[6 * 1024 + 5]);
 }
@@ -811,7 +811,7 @@ test "Phase0: triangle semi-transparency uses the four integer blend modes" {
         gpu.draw_env.draw_mode = @as(u32, mode) << 5;
         gpu.vram.data[6 * 1024 + 5] = back;
 
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), front, true, .{});
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), front, true, .{}, .all);
 
         try expectEqual(Color.blend(back, front, mode), gpu.vram.data[6 * 1024 + 5]);
         if (mode == 3) break;
@@ -847,6 +847,7 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
         false,
         false,
         .{},
+        .all,
     );
 
     try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
@@ -911,7 +912,7 @@ test "Phase0: a sub-pixel sliver triangle covers no pixel centre" {
     for (cases, 0..) |c, i| {
         var gpu = Gpu.init();
         envFullArea(&gpu);
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]), 0x7FFF, false, .{});
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]), 0x7FFF, false, .{}, .all);
 
         for (gpu.vram.data, 0..) |px, idx| {
             if (px != 0) {
@@ -952,6 +953,7 @@ test "Phase0: triangle coverage matches the edge-function rule exactly" {
             0x7FFF,
             false,
             .{},
+            .all,
         );
 
         var y: i32 = 0;
@@ -987,8 +989,8 @@ test "Phase0: two triangles sharing an edge paint every pixel exactly once" {
     gpu.draw_env.draw_mode = 1 << 5; // blend mode 1: B + F
     const c: u16 = 8 | (8 << 5) | (8 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 0), pt(31, 31), c, true, .{});
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 31), pt(0, 31), c, true, .{});
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 0), pt(31, 31), c, true, .{}, .all);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 31), pt(0, 31), c, true, .{}, .all);
 
     var y: usize = 1;
     while (y < 31) : (y += 1) {
@@ -1042,7 +1044,7 @@ test "Phase0: a flat-coloured Gouraud triangle is flat" {
     const c: u32 = 0x00808080; // r = g = b = 128 -> 5-bit 16 each
     const want: u16 = 16 | (16 << 5) | (16 << 10); // 0x4210
 
-    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false, .{ 0, 0, 0 }, false, .{});
+    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false, .{ 0, 0, 0 }, false, .{}, .all);
 
     var painted: usize = 0;
     for (gpu.vram.data, 0..) |px, idx| {
@@ -1098,6 +1100,7 @@ test "Phase0: Gouraud shading is the exact integer interpolant" {
             .{ 0, 0, 0 },
             false,
             .{},
+            .all,
         );
 
         var y: i32 = 0;
@@ -1181,6 +1184,7 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
             false,
             false,
             .{},
+            .all,
         );
 
         var y: i32 = 0;
@@ -1273,7 +1277,7 @@ test "Phase0: shaded line gradient is the exact integer interpolant" {
     const c0: u32 = 0x00000000; // r = 0
     const c1: u32 = 0x00000070; // r = 112
 
-    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 0, 0, c0, 20, 0, c1, false);
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 0, 0, c0, 20, 0, c1, false, .all);
 
     var k: i32 = 0;
     while (k <= 20) : (k += 1) {
@@ -1291,7 +1295,7 @@ test "Phase0: a zero-length shaded line paints the first endpoint's colour" {
     var gpu = Gpu.init();
     envFullArea(&gpu);
     const c0: u32 = 0x000000F8; // r = 248 -> 5-bit 31
-    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false);
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false, .all);
     try expectEqual(@as(u16, 31), gpu.vram.data[7 * 1024 + 7] & 0x1F);
 }
 
@@ -1309,7 +1313,7 @@ test "Phase0: a zero-length shaded line dithers like every other pixel" {
     envFullArea(&gpu);
     gpu.draw_env.draw_mode = 1 << 9; // dithering on
     const c0: u32 = 0x000000F8; // r = 248, g = 0, b = 0
-    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false);
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false, .all);
     try expectEqual(@as(u16, 30), gpu.vram.data[7 * 1024 + 7] & 0x1F);
 }
 
@@ -2071,6 +2075,7 @@ test "a Gouraud textured triangle modulates by the interpolated colour" {
         false,
         false,
         .{},
+        .all,
     );
 
     // Row y = 1 runs from vertex 0 to vertex 1. Modulation is unity at a
@@ -2279,6 +2284,7 @@ fn drawRampTriangle(gpu: *Gpu, rw: [3]i32) void {
         true,
         false,
         .{},
+        .all,
     );
 }
 
@@ -2392,6 +2398,7 @@ test "Phase3: the overflow bound holds at the oversized cap" {
         true,
         false,
         .{},
+        .all,
     );
     // u = v = 255 at all three vertices, so the interpolant is constant
     // whatever the weights are — what is under test is that computing it at
@@ -2490,6 +2497,7 @@ fn drawShadedRampTriangle(gpu: *Gpu, rw: [3]i32, perspective: bool) void {
         rw,
         perspective,
         .{},
+        .all,
     );
 }
 
@@ -2559,6 +2567,7 @@ test "Phase4: three equal colours reproduce the affine result exactly" {
                 rw,
                 on,
                 .{},
+                .all,
             );
         }
         try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
@@ -2595,6 +2604,7 @@ test "Phase4: an equal modulation colour reproduces the affine texel exactly" {
             true,
             on,
             .{},
+            .all,
         );
     }
     try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
@@ -3055,4 +3065,257 @@ test "Bus mirrors the ratio into the GPU" {
     defer bus.deinit(std.testing.allocator);
     bus.setCpuOverclock(150);
     try expectEqual(Ratio.fromPercent(150), bus.gpu.clock);
+}
+
+// --- Interlaced rendering: a draw writes one field's rows, decided once.
+
+const Rows = ps1_core.gpu.Rows;
+const Vram = ps1_core.gpu.Vram;
+
+const field_texture_x: usize = 256;
+const field_texture_y: usize = 256;
+const field_tpage: u16 = (2 << 7) | (1 << 4) | 4; // 16bpp at (256, 256)
+
+fn seedFieldTexture(vram: *Vram) void {
+    for (0..64) |ty| {
+        for (0..64) |tx| vram.data[(field_texture_y + ty) * 1024 + field_texture_x + tx] = @intCast(0x4000 + ty * 64 + tx);
+    }
+}
+
+const field_kinds = [_][]const u8{
+    "mono triangle",      "shaded triangle", "textured triangle", "mono rectangle",
+    "textured rectangle", "mono line",       "shaded line",       "fill",
+};
+
+fn drawFieldKind(vram: *Vram, env: *const ps1_core.gpu.Regs.DrawingEnv, kind: usize, rows: Rows) void {
+    switch (kind) {
+        0 => Renderer.drawTriangle(vram, env, pt(2, 3), pt(50, 9), pt(20, 60), 0x7FFF, false, .{}, rows),
+        1 => Renderer.drawShadedTriangle(vram, env, pt(2, 3), 0x0000FF, pt(50, 9), 0x00FF00, pt(20, 60), 0xFF0000, false, .{ 0, 0, 0 }, false, .{}, rows),
+        2 => Renderer.drawTexturedTriangle(
+            vram,
+            env,
+            tpt(2, 3, 0, 0),
+            tpt(50, 9, 40, 0),
+            tpt(20, 60, 10, 40),
+            0xFFFFFF,
+            0xFFFFFF,
+            0xFFFFFF,
+            0,
+            field_tpage,
+            false,
+            0x25,
+            .{ 0, 0, 0 },
+            false,
+            false,
+            .{},
+            rows,
+        ),
+        3 => Renderer.drawRectangle(vram, env, 5, 6, 30, 21, 0x7FFF, false, rows),
+        4 => Renderer.drawTexturedRectangle(vram, env, 5, 6, 30, 21, 3, 4, 0x7FFF, 0, field_tpage, false, 0x65, rows),
+        5 => Renderer.drawLine(vram, env, 2, 3, 40, 30, 0x7FFF, false, rows),
+        6 => Renderer.drawShadedLine(vram, env, 2, 3, 0x0000FF, 40, 30, 0xFF0000, false, rows),
+        7 => vram.fillRectangle(5, 6, 30, 21, 0x7FFF, rows),
+        else => unreachable,
+    }
+}
+
+test "Rows: every draw kind writes exactly its rows, and the two fields make the whole" {
+    const alloc = std.testing.allocator;
+    var env: ps1_core.gpu.Regs.DrawingEnv = .{};
+    env.area_bot_right = 1023 | (511 << 10);
+    const all = try alloc.create(Vram);
+    defer alloc.destroy(all);
+    const even = try alloc.create(Vram);
+    defer alloc.destroy(even);
+    const odd = try alloc.create(Vram);
+    defer alloc.destroy(odd);
+
+    for (field_kinds, 0..) |name, kind| {
+        errdefer std.debug.print("kind: {s}\n", .{name});
+        for ([_]*Vram{ all, even, odd }) |v| {
+            v.* = .{};
+            seedFieldTexture(v);
+        }
+        drawFieldKind(all, &env, kind, .all);
+        drawFieldKind(even, &env, kind, .even);
+        drawFieldKind(odd, &env, kind, .odd);
+
+        var painted = [2]usize{ 0, 0 };
+        for (0..64) |y| {
+            for (0..64) |x| {
+                const i = y * 1024 + x;
+                const want = all.data[i];
+                if (want != 0) painted[y & 1] += 1;
+                try expectEqual(if (y & 1 == 0) want else 0, even.data[i]);
+                try expectEqual(if (y & 1 == 1) want else 0, odd.data[i]);
+            }
+        }
+        try std.testing.expect(painted[0] > 0 and painted[1] > 0);
+    }
+}
+
+test "Rows: a draw's parity is its absolute VRAM row, drawing offset included" {
+    const alloc = std.testing.allocator;
+    const vram = try alloc.create(Vram);
+    defer alloc.destroy(vram);
+    vram.* = .{};
+    var env: ps1_core.gpu.Regs.DrawingEnv = .{};
+    env.area_bot_right = 1023 | (511 << 10);
+    env.offset = 1 << 11; // y offset 1
+
+    Renderer.drawRectangle(vram, &env, 0, 0, 4, 4, 0x7FFF, false, .even);
+
+    // Rows 1..4 are covered; the even ones among them are 2 and 4.
+    for (0..8) |y| try expectEqual(@as(u16, if (y == 2 or y == 4) 0x7FFF else 0), vram.data[y * 1024]);
+}
+
+test "Rows: restrict stamps draws and fills, and nothing else" {
+    const stamped = [_]command.Kind{
+        .draw_triangle,
+        .draw_shaded_triangle,
+        .draw_textured_triangle,
+        .draw_rectangle,
+        .draw_textured_rectangle,
+        .draw_line,
+        .draw_shaded_line,
+        .fill_rect,
+    };
+    for (stamped) |kind| {
+        try std.testing.expect(command.isFieldKind(kind));
+        for ([_]Rows{ .all, .even, .odd }) |rows| {
+            var cmd: command.Command = .{ .kind = kind };
+            command.restrict(&cmd, rows);
+            try expectEqual(rows, command.rowsOf(cmd));
+        }
+    }
+    for ([_]command.Kind{ .copy_rect, .vram_write_setup, .vram_write_data, .vram_read_setup, .set_draw_env, .clear_depth }) |kind| {
+        try std.testing.expect(!command.isFieldKind(kind));
+        var cmd: command.Command = .{ .kind = kind };
+        command.restrict(&cmd, .odd);
+        try expectEqual(@as(u8, 0), cmd.flags);
+        try expectEqual(Rows.all, command.rowsOf(cmd));
+    }
+}
+
+test "Rows: restrict keeps the depth flags a record already carries" {
+    var cmd: command.Command = .{ .kind = .draw_shaded_triangle, .flags = command.flag_depth_test | command.flag_depth_write };
+    command.restrict(&cmd, .odd);
+    try expectEqual(Rows.odd, command.rowsOf(cmd));
+    try std.testing.expect(cmd.flags & command.flag_depth_test != 0 and cmd.flags & command.flag_depth_write != 0);
+}
+
+test "Rows: lastRows reads the newest draw or fill, and null when there is none" {
+    var records: [4]command.Command = .{
+        .{ .kind = .draw_triangle },
+        .{ .kind = .fill_rect },
+        .{ .kind = .copy_rect },
+        .{ .kind = .vram_write_setup },
+    };
+    try std.testing.expectEqual(@as(?Rows, null), command.lastRows(&.{}));
+    try std.testing.expectEqual(@as(?Rows, null), command.lastRows(records[2..]));
+    command.restrict(&records[0], .odd);
+    command.restrict(&records[1], .even);
+    try std.testing.expectEqual(@as(?Rows, .even), command.lastRows(&records));
+    try std.testing.expectEqual(@as(?Rows, .odd), command.lastRows(records[0..1]));
+}
+
+fn interlacedGpu(gpu: *Gpu) void {
+    gpu.interlaced_rendering = true;
+    gpu.disp_env.display_mode = 0x24; // 480 lines and interlaced
+    gpu.disp_env.vram_y_start = 0;
+    gpu.draw_env.draw_mode = 0;
+    gpu.is_even_field = false;
+    gpu.is_vblank = false;
+}
+
+test "drawRows: the setting off, a progressive mode or E1 bit 10 draw every row" {
+    var gpu = Gpu.init();
+    interlacedGpu(&gpu);
+    try expectEqual(Rows.odd, gpu.drawRows());
+
+    gpu.interlaced_rendering = false;
+    try expectEqual(Rows.all, gpu.drawRows());
+    gpu.interlaced_rendering = true;
+
+    for ([_]u32{ 0x00, 0x04, 0x20 }) |mode| {
+        gpu.disp_env.display_mode = mode;
+        try expectEqual(Rows.all, gpu.drawRows());
+    }
+    gpu.disp_env.display_mode = 0x24;
+
+    gpu.draw_env.draw_mode = 1 << 10;
+    try expectEqual(Rows.all, gpu.drawRows());
+}
+
+test "drawRows: a draw takes the rows of the field not being scanned out" {
+    var gpu = Gpu.init();
+    interlacedGpu(&gpu);
+
+    // The shown field is the frame's field in the active area and the other
+    // one from vblank start; display line 0 is VRAM row `vram_y_start`.
+    const Case = struct { y: u16, even_field: bool, vblank: bool, want: Rows };
+    const cases = [_]Case{
+        .{ .y = 0, .even_field = false, .vblank = false, .want = .odd },
+        .{ .y = 0, .even_field = true, .vblank = false, .want = .even },
+        .{ .y = 0, .even_field = false, .vblank = true, .want = .even },
+        .{ .y = 0, .even_field = true, .vblank = true, .want = .odd },
+        .{ .y = 1, .even_field = false, .vblank = false, .want = .even },
+        .{ .y = 1, .even_field = true, .vblank = false, .want = .odd },
+        .{ .y = 1, .even_field = false, .vblank = true, .want = .odd },
+        .{ .y = 1, .even_field = true, .vblank = true, .want = .even },
+        .{ .y = 17, .even_field = false, .vblank = false, .want = .even },
+        .{ .y = 240, .even_field = false, .vblank = false, .want = .odd },
+    };
+    for (cases) |c| {
+        gpu.disp_env.vram_y_start = c.y;
+        gpu.is_even_field = c.even_field;
+        gpu.is_vblank = c.vblank;
+        try expectEqual(c.want, gpu.drawRows());
+    }
+}
+
+test "Gpu: GP0 draws and fills land on one field while an upload writes every row" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    interlacedGpu(&gpu);
+
+    // The shown field is the even rows (y = 0, not in vblank), so a draw
+    // takes the odd ones.
+    gpu.cycle_debt = 0;
+    _ = gpu.writeGp0(0x02FFFFFF, Value.none); // fill
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(xy(16, 8), Value.none);
+    gpu.cycle_debt = 0;
+    _ = gpu.writeGp0(0x60FFFFFF, Value.none); // mono rectangle
+    _ = gpu.writeGp0(xy(32, 0), Value.none);
+    _ = gpu.writeGp0(xy(16, 8), Value.none);
+    gpu.cycle_debt = 0;
+    _ = gpu.writeGp0(0xA0000000, Value.none); // upload 16 x 8
+    _ = gpu.writeGp0(xy(64, 0), Value.none);
+    _ = gpu.writeGp0(xy(16, 8), Value.none);
+    for (0..64) |_| {
+        gpu.cycle_debt = 0;
+        _ = gpu.writeGp0(0x7FFF7FFF, Value.none);
+    }
+
+    for (0..8) |y| {
+        const drawn: u16 = if (y & 1 == 1) 0x7FFF else 0;
+        try expectEqual(drawn, gpu.vram.data[y * 1024 + 3]);
+        try expectEqual(drawn, gpu.vram.data[y * 1024 + 40]);
+        try expectEqual(@as(u16, 0x7FFF), gpu.vram.data[y * 1024 + 70]);
+    }
+}
+
+test "Gpu: with interlaced rendering off a 480i draw writes every row" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    interlacedGpu(&gpu);
+    gpu.interlaced_rendering = false;
+
+    gpu.cycle_debt = 0;
+    _ = gpu.writeGp0(0x02FFFFFF, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(xy(16, 8), Value.none);
+
+    for (0..8) |y| try expectEqual(@as(u16, 0x7FFF), gpu.vram.data[y * 1024 + 3]);
 }

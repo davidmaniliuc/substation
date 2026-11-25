@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const Vram = @import("vram.zig").Vram;
+pub const Rows = @import("vram.zig").Rows;
 pub const Regs = @import("registers.zig");
 pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
 pub const Renderer = @import("renderer.zig").Renderer;
@@ -75,6 +76,11 @@ pub const Gpu = struct {
     /// configuration, never in a state). Drawing follows the CPU, so a draw's
     /// debt, which drains in real video cycles, is charged through it.
     clock: Ratio = .{},
+    /// Interlaced rendering: in 480i, with drawing to the displayed field
+    /// forbidden, each draw skips the field being scanned out. Host
+    /// configuration like `clock`, never in a state, and off is the identity:
+    /// every row is drawn, the picture a progressive display wants.
+    interlaced_rendering: bool = false,
 
     /// Video cycles stepped past without applying them, and the video cycles
     /// until the earliest thing `stepEvents` does — the guard `cdrom.zig`
@@ -426,6 +432,7 @@ pub const Gpu = struct {
         self.fifo_head = self.fifo_head +% 1;
         self.fifo_count -= 1;
 
+        self.sink.rows = self.drawRows();
         const debt = self.gp0.write(value, p, &self.sink, &self.vram, &self.draw_env, &self.interrupt_flag);
         self.cycle_debt += @intCast(self.clock.drawCost(debt));
 
@@ -433,6 +440,27 @@ pub const Gpu = struct {
         // latch. `gp0` only sees the VRAM and draw environment, so the mode
         // is picked up from the transfer it just armed.
         if (self.sink.transfer.readActive()) self.gpu_read_mode = .Vram;
+    }
+
+    /// 480-line interlaced mode: GP1(08h) bits 2 and 5.
+    pub fn interlaced480(self: *const Self) bool {
+        const mode = self.disp_env.display_mode;
+        return (mode >> 2) & 1 == 1 and (mode >> 5) & 1 == 1;
+    }
+
+    /// The rows a draw executing now may write: all of them unless interlaced
+    /// rendering is on, the display is 480i and GP0(E1) bit 10 forbids drawing
+    /// to the displayed field. The field on screen is `is_even_field` during
+    /// the active area and the other one from vblank start (GPUSTAT bit 31
+    /// reports the same), so `shown = is_even_field != is_vblank`. The shown
+    /// rows are those of parity `(vram_y_start + shown) & 1`, and the draw
+    /// takes the others.
+    pub fn drawRows(self: *const Self) Rows {
+        if (!self.interlaced_rendering or !self.interlaced480()) return .all;
+        if ((self.draw_env.draw_mode >> 10) & 1 == 1) return .all;
+        const shown: u32 = @intFromBool(self.is_even_field != self.is_vblank);
+        const drawn_odd = (self.disp_env.vram_y_start + shown) & 1 == 0;
+        return if (drawn_odd) .odd else .even;
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {

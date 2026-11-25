@@ -12,6 +12,7 @@
 const std = @import("std");
 const Vram = @import("vram.zig").Vram;
 const VramMask = @import("vram.zig").Mask;
+const Rows = @import("vram.zig").Rows;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const Renderer = @import("renderer.zig").Renderer;
 const Primitive = @import("primitive.zig");
@@ -61,6 +62,64 @@ pub const flag_color_perspective: u8 = 1 << 1;
 /// bit can reach a pixel.
 pub const flag_depth_test: u8 = 1 << 2;
 pub const flag_depth_write: u8 = 1 << 3;
+
+/// The interlaced-rendering pair, on draws and fills. `flag_field`: the
+/// record writes one field's rows only; `flag_field_odd`: which. Decided by
+/// `Gpu.drawRows` when the GP0 word executes, because a replay has no display
+/// state. With the host setting off no record carries either bit, so every
+/// record's bytes are what they were. The two bits are read and written
+/// nowhere but here (`restrict`, `rowsOf`).
+const flag_field: u8 = 1 << 4;
+const flag_field_odd: u8 = 1 << 5;
+
+/// The kinds a field restricts: everything that draws or fills. Uploads and
+/// copies write every row.
+pub fn isFieldKind(kind: Kind) bool {
+    return switch (kind) {
+        .draw_triangle,
+        .draw_shaded_triangle,
+        .draw_textured_triangle,
+        .draw_rectangle,
+        .draw_textured_rectangle,
+        .draw_line,
+        .draw_shaded_line,
+        .fill_rect,
+        => true,
+        else => false,
+    };
+}
+
+/// Restricts a field kind to `rows` and leaves every other kind alone. `.all`
+/// ORs nothing, which is why a core with the setting off records the bytes it
+/// always did.
+pub fn restrict(cmd: *Command, rows: Rows) void {
+    if (!isFieldKind(cmd.kind)) return;
+    cmd.flags |= switch (rows) {
+        .all => 0,
+        .even => flag_field,
+        .odd => flag_field | flag_field_odd,
+    };
+}
+
+/// The rows a record writes, as `restrict` stamped them.
+pub fn rowsOf(cmd: Command) Rows {
+    if (cmd.flags & flag_field == 0) return .all;
+    return if (cmd.flags & flag_field_odd != 0) .odd else .even;
+}
+
+/// The rows the newest draw or fill of a stream wrote, or null when it holds
+/// none (a frame of uploads, a static frame). Within one frame window every
+/// restricted draw has the same parity, so the newest only decides between a
+/// restricted draw and an unrestricted one, after GP0(E1) bit 10 changes
+/// mid-frame.
+pub fn lastRows(records: []const Command) ?Rows {
+    var i = records.len;
+    while (i > 0) {
+        i -= 1;
+        if (isFieldKind(records[i].kind)) return rowsOf(records[i]);
+    }
+    return null;
+}
 
 pub const Vertex = extern struct {
     x: i16 = 0,
@@ -224,6 +283,7 @@ pub fn applyEnv(cmd: Command, env: *DrawingEnv) void {
 pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv) void {
     const transp = cmd.transparent != 0;
     const color16: u16 = @truncate(cmd.value);
+    const rows = rowsOf(cmd);
 
     switch (cmd.kind) {
         .draw_triangle => Renderer.drawTriangle(
@@ -235,6 +295,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             color16,
             transp,
             depthOf(cmd),
+            rows,
         ),
         .draw_shaded_triangle => Renderer.drawShadedTriangle(
             vram,
@@ -249,6 +310,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
             (cmd.flags & flag_color_perspective) != 0,
             depthOf(cmd),
+            rows,
         ),
         .draw_textured_triangle => Renderer.drawTexturedTriangle(
             vram,
@@ -267,6 +329,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             (cmd.flags & flag_texture_perspective) != 0,
             (cmd.flags & flag_color_perspective) != 0,
             depthOf(cmd),
+            rows,
         ),
         .draw_rectangle => Renderer.drawRectangle(
             vram,
@@ -277,6 +340,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             cmd.h,
             color16,
             transp,
+            rows,
         ),
         .draw_textured_rectangle => Renderer.drawTexturedRectangle(
             vram,
@@ -292,6 +356,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             cmd.tpage,
             transp,
             cmd.opcode,
+            rows,
         ),
         .draw_line => Renderer.drawLine(
             vram,
@@ -302,6 +367,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             cmd.v[1].y,
             color16,
             transp,
+            rows,
         ),
         .draw_shaded_line => Renderer.drawShadedLine(
             vram,
@@ -313,6 +379,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             cmd.v[1].y,
             cmd.v[1].color,
             transp,
+            rows,
         ),
 
         .set_draw_env,
@@ -327,6 +394,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             @intCast(cmd.w),
             @intCast(cmd.h),
             color16,
+            rows,
         ),
         // The E6 mask is not recorded: it is read from the replayed env, which
         // carries the same value at this point in the stream by construction.

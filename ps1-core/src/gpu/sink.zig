@@ -10,6 +10,7 @@
 const std = @import("std");
 const gpu_options = @import("gpu_options");
 const Vram = @import("vram.zig").Vram;
+const Rows = @import("vram.zig").Rows;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const command = @import("command.zig");
 const Primitive = @import("primitive.zig");
@@ -57,6 +58,11 @@ pub const Sink = struct {
     /// A pixel record landed while a GPUREAD was draining, so the rect its
     /// setup settled no longer says what `.software` would read next.
     read_stale: bool = false,
+    /// The rows a draw or fill submitted now may write, as `Gpu.drawRows`
+    /// decided them for the GP0 word executing. Re-derived before every word,
+    /// so never saved or hashed; only field kinds read it and only GP0 submits
+    /// them.
+    rows: Rows = .all,
 
     pub fn setRasterize(self: *Sink, on: bool) void {
         if (!on) std.debug.assert(self.worker == null);
@@ -123,7 +129,9 @@ pub const Sink = struct {
     /// see the SAME record, so a field the sink forgets to fill is a field the
     /// rasterizer does not get either. Under a worker the env kinds are
     /// applied here as well, to the emulator's environment.
-    fn submit(self: *Sink, vram: *Vram, env: *DrawingEnv, cmd: command.Command) void {
+    fn submit(self: *Sink, vram: *Vram, env: *DrawingEnv, record: command.Command) void {
+        var cmd = record;
+        command.restrict(&cmd, self.rows);
         if (comptime Sink.kind == .dual) {
             self.makeRoom(1, 0);
             self.rec.push(cmd);
