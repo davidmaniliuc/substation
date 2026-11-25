@@ -2424,6 +2424,38 @@ test "a fresh machine runs the CD at 1x" {
     try std.testing.expectEqual(ps1_core.cdrom.speedup.Speedup{}, h.cpu.bus.cdrom.speedup);
 }
 
+test "ps1_set_interlaced_rendering reaches the GPU, and any non-zero value is on" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    try std.testing.expect(!h.cpu.bus.gpu.interlaced_rendering);
+    capi.ps1_set_interlaced_rendering(h, 1);
+    try std.testing.expect(h.cpu.bus.gpu.interlaced_rendering);
+    capi.ps1_set_interlaced_rendering(h, 0);
+    try std.testing.expect(!h.cpu.bus.gpu.interlaced_rendering);
+    capi.ps1_set_interlaced_rendering(h, -4);
+    try std.testing.expect(h.cpu.bus.gpu.interlaced_rendering);
+}
+
+test "a reset and a state load keep interlaced rendering, and a state never carries it" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const plain = try saveState(h);
+    defer std.testing.allocator.free(plain);
+    capi.ps1_set_interlaced_rendering(h, 1);
+    const on = try saveState(h);
+    defer std.testing.allocator.free(on);
+    try std.testing.expectEqualSlices(u8, plain, on);
+
+    capi.ps1_reset(h);
+    try std.testing.expect(h.cpu.bus.gpu.interlaced_rendering);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, on.ptr, on.len));
+    try std.testing.expect(h.cpu.bus.gpu.interlaced_rendering);
+
+    capi.ps1_set_interlaced_rendering(h, 0);
+    capi.ps1_reset(h);
+    try std.testing.expect(!h.cpu.bus.gpu.interlaced_rendering);
+}
+
 test "ps1_lookup_cd_speedup reads the table" {
     var read_ok: c_int = -1;
     var seek_ok: c_int = -1;

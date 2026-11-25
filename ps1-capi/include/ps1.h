@@ -526,6 +526,15 @@ void    ps1_set_widescreen(Ps1*, int widescreen);
  * frame. */
 void    ps1_set_cd_speedup(Ps1*, int read, int seek);
 
+/* Interlaced rendering: in 480-line interlaced mode, when the game forbids
+ * drawing to the displayed field (GP0(E1) bit 10 clear), each draw and fill
+ * writes only the rows of the field not on screen, as the hardware does. Off
+ * (0) draws every row, which is the picture a progressive display wants; any
+ * other value is on. The picture then holds two fields, which the host must
+ * weave or deinterlace. Not part of a save state. Idempotent: safe every
+ * frame. */
+void    ps1_set_interlaced_rendering(Ps1*, int on);
+
 /* The engine the machine is running on now. */
 int     ps1_get_cpu_engine(const Ps1*);
 

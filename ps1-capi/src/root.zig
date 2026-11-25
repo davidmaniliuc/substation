@@ -367,6 +367,7 @@ const HostSettings = struct {
     cpu_overclock: u32,
     widescreen: ps1.widescreen.Widescreen,
     cd_speedup: ps1.cdrom.speedup.Speedup,
+    interlaced_rendering: bool,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -387,6 +388,7 @@ const HostSettings = struct {
             .cpu_overclock = bus.cpu_overclock.percent(),
             .widescreen = bus.widescreen,
             .cd_speedup = bus.cdrom.speedup,
+            .interlaced_rendering = bus.gpu.interlaced_rendering,
         };
     }
 
@@ -404,6 +406,7 @@ const HostSettings = struct {
         bus.setCpuOverclock(s.cpu_overclock);
         bus.widescreen = s.widescreen;
         bus.cdrom.speedup = s.cd_speedup;
+        bus.gpu.interlaced_rendering = s.interlaced_rendering;
         // Last, because it is what mirrors the rest onto the GPU.
         bus.setPgxp(s.on);
     }
@@ -1320,6 +1323,13 @@ pub export fn ps1_set_cd_speedup(h: *Handle, read: c_int, seek: c_int) void {
         .read = ps1.cdrom.speedup.Factor.fromInt(read) orelse .x1,
         .seek = ps1.cdrom.speedup.Factor.fromInt(seek) orelse .x1,
     };
+}
+
+/// Interlaced rendering: in 480-line interlaced mode, with the game forbidding
+/// drawing to the displayed field, each draw skips the field on screen. Any
+/// non-zero value is on.
+pub export fn ps1_set_interlaced_rendering(h: *Handle, on: c_int) void {
+    h.cpu.bus.gpu.interlaced_rendering = on != 0;
 }
 
 /// The engine the machine is running on now.
