@@ -69,47 +69,22 @@ static float4 unpack1555(uint texel) {
                   1.0);
 }
 
-static float4 display_color(VertexOut in,
-                            texture2d<uint, access::read> vram,
-                            texture2d<uint, access::read> shadow,
-                            texture2d<uint, access::read> sidecar,
-                            constant Params& p) {
-    // Outside the picture: a letterbox bar.
-    if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
-        return float4(0.0, 0.0, 0.0, 1.0);
-    }
-    if (p.enabled == 0 || p.width == 0 || p.height == 0) {
-        return float4(0.0, 0.0, 0.0, 1.0);
-    }
-
-    // The sample grid is N times finer than the programmed display area, which
-    // stays in NATIVE units (registers.zig's getVisibleWidth/Height). This
-    // multiplication IS the phase: scaling only the wraps below leaves every
-    // sample on its block's top-left subtexel, which by Phase C's exactness
-    // property is byte-identical to the 1x picture -- 67 MB at 8x for no
-    // visible change.
-    uint sw = p.width  * p.scale;
-    uint sh = p.height * p.scale;
-
-    uint px = uint(in.uv.x * float(sw));
-    uint py = uint(in.uv.y * float(sh));
-    if (px >= sw) px = sw - 1;
-    if (py >= sh) py = sh - 1;
-
-    // The same split Rasterizer.metal applies to a scaled fragment. Everything
-    // that wraps, addresses the shadow or packs bytes is computed from nx/ny;
-    // only the 15bpp read of the render texture re-adds sub_x/sub_y.
-    uint nx = px / p.scale, sub_x = px % p.scale;
-    uint ny = py / p.scale, sub_y = py % p.scale;
-
+/// The picture at native pixel `nx` of display line `line`, at subtexel
+/// (`sub_x`, `sub_y`) of the internal resolution: the one place 24bpp
+/// packing, the software seam, the sidecar and the five-bit fallback live.
+static float4 fetch_line(uint nx, uint line, uint sub_x, uint sub_y,
+                         texture2d<uint, access::read> vram,
+                         texture2d<uint, access::read> shadow,
+                         texture2d<uint, access::read> sidecar,
+                         constant Params& p) {
     uint col = (p.vram_x + nx) & 1023;
-    uint row = (p.vram_y + ny) & 511;
+    uint row = (p.vram_y + line) & 511;
 
     if (p.depth24 != 0) {
         // 24bpp: three bytes per pixel packed across ADJACENT 16-bit VRAM
         // words, so the packing is native arithmetic: each word is read from
         // the render texture at its block's TOP-LEFT subtexel (the readback
-        // rule), addressed at nx/ny with sub_x/sub_y DISCARDED. 24bpp content
+        // rule), addressed at nx/line with sub_x/sub_y DISCARDED. 24bpp content
         // is FMV, MDEC output uploaded through A0, and a native upload is
         // exact there at every scale. Croc and Silent Hill both depend on this.
         uint byte_off = nx * 3;
@@ -149,6 +124,41 @@ static float4 display_color(VertexOut in,
     // form the parent spec specifies -- is a modulo only at power-of-two s and
     // samples the wrong column at s = 3.
     return unpack1555(vram.read(addr).r);
+}
+
+static float4 display_color(VertexOut in,
+                            texture2d<uint, access::read> vram,
+                            texture2d<uint, access::read> shadow,
+                            texture2d<uint, access::read> sidecar,
+                            constant Params& p) {
+    // Outside the picture: a letterbox bar.
+    if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    if (p.enabled == 0 || p.width == 0 || p.height == 0) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    // The sample grid is N times finer than the programmed display area, which
+    // stays in NATIVE units (registers.zig's getVisibleWidth/Height). This
+    // multiplication IS the phase: scaling only the wraps below leaves every
+    // sample on its block's top-left subtexel, which by Phase C's exactness
+    // property is byte-identical to the 1x picture -- 67 MB at 8x for no
+    // visible change.
+    uint sw = p.width  * p.scale;
+    uint sh = p.height * p.scale;
+
+    uint px = uint(in.uv.x * float(sw));
+    uint py = uint(in.uv.y * float(sh));
+    if (px >= sw) px = sw - 1;
+    if (py >= sh) py = sh - 1;
+
+    // The same split Rasterizer.metal applies to a scaled fragment. Everything
+    // that wraps, addresses the shadow or packs bytes is computed from nx/ny;
+    // only the 15bpp read of the render texture re-adds sub_x/sub_y.
+    uint nx = px / p.scale, sub_x = px % p.scale;
+    uint ny = py / p.scale, sub_y = py % p.scale;
+    return fetch_line(nx, ny, sub_x, sub_y, vram, shadow, sidecar, p);
 }
 
 /// Where a finished picture's pixels come from. The band and the saturation
