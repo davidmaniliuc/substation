@@ -100,6 +100,7 @@ struct SessionSettings: Equatable, Sendable {
     /// folds the per-game table that holds a known game to 1.
     var cdReadSpeedup: Int = CdSpeedupSetting.defaultFactor
     var cdSeekSpeedup: Int = CdSpeedupSetting.defaultFactor
+    var deinterlacing: Deinterlacing = .progressive
 
     var c: Ps1SessionSettings {
         Ps1SessionSettings(
@@ -119,7 +120,8 @@ struct SessionSettings: Equatable, Sendable {
             display_effect: Int32(displayEffect.rawValue),
             widescreen: Int32(widescreen.rawValue),
             cd_read_speedup: Int32(clamping: cdReadSpeedup),
-            cd_seek_speedup: Int32(clamping: cdSeekSpeedup))
+            cd_seek_speedup: Int32(clamping: cdSeekSpeedup),
+            deinterlace: Int32(deinterlacing.rawValue))
     }
 }
 

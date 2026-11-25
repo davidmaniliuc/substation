@@ -475,6 +475,18 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// How a 480i game is shown, persisted, and handed over like
+    /// `displayEffect`.
+    private var deinterlacingSetting = DeinterlacingSetting()
+
+    public var deinterlacing: Deinterlacing {
+        get { deinterlacingSetting.mode }
+        set {
+            deinterlacingSetting.set(newValue)
+            pushSettings()
+        }
+    }
+
     /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above. Every change hands the
     /// session every setting in one `setSettings`.
@@ -688,7 +700,8 @@ public final class EmulatorViewModel {
                         displayEffect: displayEffect,
                         widescreen: widescreen,
                         cdReadSpeedup: cdSpeedupSetting.read,
-                        cdSeekSpeedup: cdSpeedupSetting.seek)
+                        cdSeekSpeedup: cdSpeedupSetting.seek,
+                        deinterlacing: deinterlacing)
     }
 
     /// The one hand-over of every setting to the session.

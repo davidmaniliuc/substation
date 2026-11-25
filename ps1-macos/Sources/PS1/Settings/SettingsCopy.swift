@@ -167,6 +167,11 @@ enum SettingsCopy {
         description: "Shows more of 3D scenes at a wider shape. Menus and 2D art are stretched."
     )
 
+    static let deinterlacing = SettingInfo(
+        title: "Deinterlacing",
+        description: "Chooses how games that draw one field at a time are shown."
+    )
+
     static let displayEffect = SettingInfo(
         title: "Display Effect",
         description: "Gives the picture a retro screen look. Screenshots stay clean."
@@ -284,7 +289,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, cdReadSpeed, cdSeekSpeed, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering, textureFiltering, spriteTextureFiltering, widescreen, displayEffect, vramReadbacks,
+        internalResolution, dithering, textureFiltering, spriteTextureFiltering, widescreen, deinterlacing, displayEffect, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, quitGameKey, controllers, pauseMenuKey, vibration,
@@ -293,6 +298,7 @@ enum SettingsCopy {
     static var allText: [String] {
         allInfo.flatMap(\.allText)
             + DitherMode.allCases.map(ditherOptionTitle)
+            + Deinterlacing.allCases.map(\.title)
             + [savingFooter, pgxpOffFooter, vramReadbacksNoGameFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }

@@ -64,6 +64,13 @@ struct VideoCommands: Commands {
             }
             .pickerStyle(.menu)
 
+            Picker("Deinterlacing", selection: $model.deinterlacing) {
+                ForEach(Deinterlacing.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+
             Picker("Display Effect", selection: $model.displayEffect) {
                 ForEach(DisplayEffect.allCases) { effect in
                     Text(effect.title).tag(effect)

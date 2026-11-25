@@ -6,7 +6,7 @@ import Testing
 /// `SessionSettings` as it crosses `ps1_session_set_settings`.
 struct SessionSettingsTests {
     @Test func theHeaderAgreesOnTheSize() {
-        #expect(MemoryLayout<Ps1SessionSettings>.size == 80)
+        #expect(MemoryLayout<Ps1SessionSettings>.size == 88)
     }
 
     @Test func aSettingsValueCrossesFieldForField() {
@@ -18,12 +18,13 @@ struct SessionSettingsTests {
                                 rewindBudget: 256 << 20, scale: 4, dither: .native,
                                 textureFilter: .bilinear, spriteFilter: .mmpxAdvanced, pgxp: pgxp,
                                 pgxpUsePresets: true, vramReadbacks: .off, displayEffect: .crt,
-                                cdReadSpeedup: 2, cdSeekSpeedup: 7)
+                                cdReadSpeedup: 2, cdSeekSpeedup: 7, deinterlacing: .blend)
         let c = s.c
-        #expect(c.size == 80)
+        #expect(c.size == 88)
         #expect(c.gain == 0.5)
         #expect(c.cd_read_speedup == 2)
         #expect(c.cd_seek_speedup == 7)
+        #expect(c.deinterlace == 2)
         #expect(c.cpu_engine == 2)
         #expect(c.runahead == 2)
         #expect(c.rewind_budget == 256 << 20)
@@ -116,6 +117,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
             #expect(s.spriteFilter == model.spriteFilter)
             #expect(s.displayEffect == model.displayEffect)
             #expect(s.widescreen == model.widescreen)
+            #expect(s.deinterlacing == model.deinterlacing)
             #expect(s.pgxp.enabled == model.pgxpEnabled)
             #expect(s.pgxp.cpu == model.pgxpCpu)
             #expect(s.pgxpUsePresets == model.pgxpUsePresets)
@@ -164,6 +166,8 @@ private func makeEntry(serial: String) throws -> GameEntry {
                 return { m.displayEffect = o } }),
             ("widescreen", { m in let o = m.widescreen; m.widescreen = o == .off ? .wide16x9 : .off
                 return { m.widescreen = o } }),
+            ("deinterlacing", { m in let o = m.deinterlacing; m.deinterlacing = o == .progressive ? .adaptive : .progressive
+                return { m.deinterlacing = o } }),
             ("pgxp", { m in let o = m.pgxpEnabled; m.pgxpEnabled = !o; return { m.pgxpEnabled = o } }),
             ("engine", { m in let o = m.cpuEngine; m.cpuEngine = o == .interpreter ? .cachedInterpreter : .interpreter
                 return { m.cpuEngine = o } }),
