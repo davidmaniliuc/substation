@@ -7,6 +7,7 @@ const fifo = @import("fifo.zig");
 const commands = @import("commands.zig");
 pub const xa = @import("xa.zig");
 const cdda = @import("cdda.zig");
+const speedup = @import("speedup.zig");
 
 /// Raw-sector layout. A 2352-byte sector opens with 12 sync bytes and a
 /// 4-byte header whose last byte is the mode; `mode_byte_offset` addresses it.
@@ -134,6 +135,10 @@ pub const CdRom = struct {
     drive: Drive = .{}, // mechanism: position, timers, mode, status
     audio: AudioOut = .{}, // the SHARED sink both decoders push into
     xa: xa.Xa = .{}, // XA-ADPCM decoder + resampler state
+    /// How much faster than the real drive reads and seeks run. Host
+    /// configuration, the single source: `Bus` reaches it here, no state
+    /// saves it, and 1x is the identity.
+    speedup: speedup.Speedup = .{},
 
     // Command dispatch. Ticked in step(), executed by commands.zig.
     pending_command: ?u8 = null,
@@ -633,9 +638,10 @@ pub const CdRom = struct {
         self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()});
     }
 
-    /// 33868800 / 75 Hz = 451584 cycles per sector; mode bit7 halves it.
+    /// 33868800 / 75 Hz = 451584 cycles per sector; mode bit7 halves it, and
+    /// the read speedup divides a double-speed data read further.
     fn cyclesPerSector(self: *const CdRom) i64 {
-        return if (self.drive.mode & 0x80 != 0) 225792 else 451584;
+        return self.speedup.sectorCycles(self.drive.mode, self.drive.drive_state == .Playing);
     }
 
     pub fn getDriveStatus(self: *const CdRom) u8 {

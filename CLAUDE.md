@@ -457,6 +457,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   warning: a patch for another rip corrupts the game silently. Only
   `ps1-trace ppf=<file>` applies one headlessly: `ps1-golden` must never pick a
   patch up from `games/`, or one dropped there moves every golden.
+- **The CD speedup is host configuration, and 1x is the identity.**
+  (`cdrom/speedup.zig`, `CdRom.speedup`, never in a state or a hash.) It
+  divides a double-speed DATA read's sector period and the two seek times
+  (ReadN's 1,000,000 and SeekL/P's 500,000); single speed, XA-ADPCM, CD-DA and
+  Play are never sped up, or music plays fast. The per-game table
+  (`cd_speedup.zig`) is folded by the session when a disc goes in, never by
+  the core.
 
 **Core subsystems** (`ps1-core-subsystems`)
 

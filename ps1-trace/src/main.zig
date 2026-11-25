@@ -142,7 +142,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot] [ppf=<file.ppf>] [overclock=<percent>]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot] [ppf=<file.ppf>] [overclock=<percent>] [cdspeed=<read>,<seek>]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -236,9 +236,25 @@ pub fn main(init: std.process.Init) !void {
         }
     } else 100;
 
+    // "cdspeed=<read>,<seek>" runs the CD drive that many times faster at
+    // reading and seeking (1 to 10), as the app's CD speedup does. Anything
+    // else is 1x.
+    const cd_speedup: ps1.speedup.Speedup = for (argv.items) |arg| {
+        if (std.mem.startsWith(u8, arg, "cdspeed=")) {
+            var parts = std.mem.splitScalar(u8, arg["cdspeed=".len..], ',');
+            const read = std.fmt.parseInt(i64, parts.next() orelse "", 10) catch 1;
+            const seek = std.fmt.parseInt(i64, parts.next() orelse "", 10) catch 1;
+            break .{
+                .read = ps1.speedup.Factor.fromInt(read) orelse .x1,
+                .seek = ps1.speedup.Factor.fromInt(seek) orelse .x1,
+            };
+        }
+    } else .{};
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     bus.setCpuOverclock(overclock);
+    bus.cdrom.speedup = cd_speedup;
     bus.setPgxp(pgxp);
     bus.setPgxpTolerance(tolerance);
     bus.setPgxpTextureCorrection(!no_perspective);

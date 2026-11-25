@@ -132,10 +132,10 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             // BIOS already fails at with SCPH-101 (the loader overruns its
             // decompression buffer into the kernel vectors). The real
             // defect is elsewhere in the read pipeline; don't "correct"
-            // this line in isolation.
+            // this line in isolation. The seek speedup divides it.
             startHead(cdrom, .Seeking);
             cdrom.drive.read_after_seek = true;
-            cdrom.drive.seek_timer = 1000000;
+            cdrom.drive.seek_timer = cdrom.speedup.seekCycles(1000000);
             // ReadN acknowledges in 1000 cycles, ReadS in 500.
             ackStatusAfter(cdrom, if (cmd == 0x06) 1000 else 500);
         },
@@ -263,7 +263,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             }
 
             // SeekL and SeekP both post their INT2 with a 500000 delay.
-            cdrom.fifos.irq_queue.pushAction(2, 500000, &[_]u8{0}, .SetIdle, true);
+            cdrom.fifos.irq_queue.pushAction(2, cdrom.speedup.seekCycles(500000), &[_]u8{0}, .SetIdle, true);
         },
         0x1A => { // GetID
             ackStatus(cdrom);

@@ -21,6 +21,7 @@ pub const ccd = @import("ccd.zig");
 pub const mds = @import("mds.zig");
 pub const disc_image = @import("disc_image.zig");
 pub const cdrom = @import("cdrom/cdrom.zig");
+pub const speedup = @import("cdrom/speedup.zig");
 pub const interrupt = @import("interrupt.zig");
 pub const mdec = @import("mdec/mdec.zig");
 pub const constants = @import("constants.zig");

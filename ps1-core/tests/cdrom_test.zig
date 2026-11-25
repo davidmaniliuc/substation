@@ -1380,3 +1380,103 @@ test "the tray closes while software polls the drive through the window" {
     }
     try std.testing.expect(!cdrom.drive.shell_open);
 }
+
+const speedup_ref = ps1_core.speedup;
+
+fn setSpeedupMode(cdrom: *CdRom, spu: *Spu, mode: u8) !void {
+    var resp: [1]u8 = undefined;
+    cdrom.write(0, 0);
+    cdrom.write(2, mode);
+    _ = try runCommand(cdrom, spu, 0x0E, 1, &resp);
+}
+
+/// The cycles between the second and third sector the drive delivers after a
+/// `cmd` (ReadN or Play) at `mode`, stepping one cycle at a time so the gap
+/// is exact. The first sector follows the seek and is not a steady period.
+fn sectorPeriod(speedup: speedup_ref.Speedup, mode: u8, cmd: u8) !u64 {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.speedup = speedup;
+    try setSpeedupMode(&cdrom, &spu, mode);
+    var resp: [1]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, cmd, 1, &resp);
+
+    var seen: u64 = 0;
+    var second: u64 = 0;
+    var cycles: u64 = 0;
+    while (cdrom.drive.sectors_delivered < 3 and cycles < 6_000_000) {
+        cdrom.step(1, &spu);
+        cycles += 1;
+        if (cdrom.drive.sectors_delivered != seen) {
+            seen = cdrom.drive.sectors_delivered;
+            if (seen == 2) second = cycles;
+        }
+    }
+    try std.testing.expectEqual(@as(u64, 3), cdrom.drive.sectors_delivered);
+    return cycles - second;
+}
+
+test "a double-speed data read at x4 delivers sectors four times closer" {
+    const x1 = try sectorPeriod(.{}, 0x80, 0x06);
+    const x4 = try sectorPeriod(.{ .read = .x4 }, 0x80, 0x06);
+    try std.testing.expectEqual(@as(u64, 225792), x1);
+    try std.testing.expectEqual(@as(u64, 225792 / 4), x4);
+}
+
+test "the read speedup leaves single speed, XA and CD-DA in real time" {
+    const x4: speedup_ref.Speedup = .{ .read = .x4 };
+    try std.testing.expectEqual(@as(u64, 451584), try sectorPeriod(x4, 0x00, 0x06)); // single speed
+    try std.testing.expectEqual(@as(u64, 225792), try sectorPeriod(x4, 0xC0, 0x06)); // XA-ADPCM
+    try std.testing.expectEqual(@as(u64, 225792), try sectorPeriod(x4, 0x81, 0x06)); // CD-DA
+    try std.testing.expectEqual(@as(u64, 225792), try sectorPeriod(x4, 0x80, 0x03)); // Play
+}
+
+/// Cycles from a ReadN's execution to the drive reporting Reading.
+fn readSeekCycles(speedup: speedup_ref.Speedup) !u64 {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.speedup = speedup;
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+    var cycles: u64 = 0;
+    while (cdrom.drive.drive_state != .Reading and cycles < 2_000_000) {
+        cdrom.step(1, &spu);
+        cycles += 1;
+    }
+    try std.testing.expectEqual(ps1_core.cdrom.DriveState.Reading, cdrom.drive.drive_state);
+    return cycles;
+}
+
+/// Cycles from a SeekL's INT3 being acknowledged to its INT2 being raised,
+/// in 1000-cycle slices.
+fn seekSecondResponseCycles(speedup: speedup_ref.Speedup) !u64 {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.speedup = speedup;
+    var resp: [1]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x15, 1, &resp); // acknowledges INT3
+    try std.testing.expectEqual(@as(u8, 3), irq);
+
+    var cycles: u64 = 0;
+    cdrom.write(0, 1);
+    while (cdrom.read(3) & 7 != 2 and cycles < 1_000_000) : (cycles += 1_000) {
+        cdrom.step(1_000, &spu);
+    }
+    return cycles;
+}
+
+test "the seek speedup divides ReadN's seek and SeekL's second response" {
+    try std.testing.expectEqual(@as(u64, 1_000_000), try readSeekCycles(.{}));
+    try std.testing.expectEqual(@as(u64, 100_000), try readSeekCycles(.{ .seek = .x10 }));
+    try std.testing.expectEqual(@as(u64, 250_000), try readSeekCycles(.{ .seek = .x4 }));
+
+    const x1 = try seekSecondResponseCycles(.{});
+    const x10 = try seekSecondResponseCycles(.{ .seek = .x10 });
+    try std.testing.expect(x1 >= 400_000 and x1 <= 500_000);
+    try std.testing.expect(x10 >= 40_000 and x10 <= 50_000);
+}
+
+test "the read speedup does not touch the seek, nor the seek speedup the read" {
+    try std.testing.expectEqual(@as(u64, 1_000_000), try readSeekCycles(.{ .read = .x10 }));
+    try std.testing.expectEqual(@as(u64, 225792), try sectorPeriod(.{ .seek = .x10 }, 0x80, 0x06));
+}
