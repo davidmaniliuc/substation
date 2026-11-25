@@ -50,7 +50,7 @@ pub const Settings = struct {
     widescreen: ps1_core.widescreen.Widescreen = .off,
     /// The player's CD speedup; 1x is off. A listed game's disabled
     /// direction is forced back to 1x in the fold.
-    cd_speedup: ps1_core.speedup.Speedup = .{},
+    cd_speedup: ps1_core.cdrom.speedup.Speedup = .{},
 };
 
 /// What the fold decides: the PGXP switches and vertex cache the machine is
@@ -60,7 +60,7 @@ pub const Folded = struct {
     vertex_cache: bool,
     vram: capi.VramMode,
     cpu_overclock: u32,
-    cd_speedup: ps1_core.speedup.Speedup,
+    cd_speedup: ps1_core.cdrom.speedup.Speedup,
 };
 
 /// `readbacks` is separate from `s.vram_readbacks` because the session's

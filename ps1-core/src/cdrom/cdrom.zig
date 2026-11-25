@@ -7,7 +7,7 @@ const fifo = @import("fifo.zig");
 const commands = @import("commands.zig");
 pub const xa = @import("xa.zig");
 const cdda = @import("cdda.zig");
-const speedup = @import("speedup.zig");
+pub const speedup = @import("speedup.zig");
 
 /// Raw-sector layout. A 2352-byte sector opens with 12 sync bytes and a
 /// 4-byte header whose last byte is the mode; `mode_byte_offset` addresses it.

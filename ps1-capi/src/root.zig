@@ -366,7 +366,7 @@ const HostSettings = struct {
     preserve_projection: bool,
     cpu_overclock: u32,
     widescreen: ps1.widescreen.Widescreen,
-    cd_speedup: ps1.speedup.Speedup,
+    cd_speedup: ps1.cdrom.speedup.Speedup,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -1317,8 +1317,8 @@ pub export fn ps1_set_widescreen(h: *Handle, mode: c_int) void {
 /// The CD speedup, each 1 to 10 times the real drive; a value out of range is 1.
 pub export fn ps1_set_cd_speedup(h: *Handle, read: c_int, seek: c_int) void {
     h.cpu.bus.cdrom.speedup = .{
-        .read = ps1.speedup.Factor.fromInt(read) orelse .x1,
-        .seek = ps1.speedup.Factor.fromInt(seek) orelse .x1,
+        .read = ps1.cdrom.speedup.Factor.fromInt(read) orelse .x1,
+        .seek = ps1.cdrom.speedup.Factor.fromInt(seek) orelse .x1,
     };
 }
 

@@ -161,7 +161,7 @@ test "the overclock table applies only while the player's is off" {
 }
 
 test "a listed game's disabled CD direction is 1x and the other keeps the player's" {
-    const Speedup = ps1_core.speedup.Speedup;
+    const Speedup = ps1_core.cdrom.speedup.Speedup;
     const player: Settings = .{ .cd_speedup = .{ .read = .x4, .seek = .x6 } };
     // Read only (SCES-02080), both (SLUS-00952), neither (SLUS-00707), and no serial.
     try expectEqual(Speedup{ .read = .x1, .seek = .x6 }, settings.forSerial(player, .automatic, "SCES-02080").cd_speedup);

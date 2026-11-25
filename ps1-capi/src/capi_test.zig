@@ -2390,14 +2390,14 @@ test "ps1_set_cd_speedup reaches the drive and an out-of-range value is 1x" {
     const h = try bootHandle(0);
     defer capi.ps1_destroy(h);
     capi.ps1_set_cd_speedup(h, 4, 10);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x4, h.cpu.bus.cdrom.speedup.read);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x10, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x4, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x10, h.cpu.bus.cdrom.speedup.seek);
     capi.ps1_set_cd_speedup(h, 0, 11);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.seek);
     capi.ps1_set_cd_speedup(h, -3, 2);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x2, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x2, h.cpu.bus.cdrom.speedup.seek);
 }
 
 test "a reset and a state load keep the CD speedup, and a state never carries it" {
@@ -2411,17 +2411,17 @@ test "a reset and a state load keep the CD speedup, and a state never carries it
     try std.testing.expectEqualSlices(u8, plain, sped);
 
     capi.ps1_reset(h);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, sped.ptr, sped.len));
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
-    try std.testing.expectEqual(ps1_core.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
 }
 
 test "a fresh machine runs the CD at 1x" {
     const h = try bootHandle(0);
     defer capi.ps1_destroy(h);
-    try std.testing.expectEqual(ps1_core.speedup.Speedup{}, h.cpu.bus.cdrom.speedup);
+    try std.testing.expectEqual(ps1_core.cdrom.speedup.Speedup{}, h.cpu.bus.cdrom.speedup);
 }
 
 test "ps1_lookup_cd_speedup reads the table" {

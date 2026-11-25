@@ -1381,7 +1381,7 @@ test "the tray closes while software polls the drive through the window" {
     try std.testing.expect(!cdrom.drive.shell_open);
 }
 
-const speedup_ref = ps1_core.speedup;
+const speedup_ref = ps1_core.cdrom.speedup;
 
 fn setSpeedupMode(cdrom: *CdRom, spu: *Spu, mode: u8) !void {
     var resp: [1]u8 = undefined;
