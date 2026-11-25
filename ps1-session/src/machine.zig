@@ -144,7 +144,7 @@ const contract = [_][]const u8{
     "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
     "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
     "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
-    "setVramMode",         "setCpuOverclock",   "setWidescreen",
+    "setVramMode",         "setCpuOverclock",   "setWidescreen",   "setCdSpeedup",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -374,6 +374,12 @@ pub const HandleMachine = struct {
     /// `PS1_WIDESCREEN_*`. Idempotent in the core, so it crosses every frame.
     pub fn setWidescreen(self: *HandleMachine, mode: u8) void {
         capi.ps1_set_widescreen(self.h, mode);
+    }
+
+    /// The folded read and seek factors. Idempotent in the core, so they
+    /// cross every frame.
+    pub fn setCdSpeedup(self: *HandleMachine, read: u8, seek: u8) void {
+        capi.ps1_set_cd_speedup(self.h, read, seek);
     }
 
     /// Allocates or frees 83 MB: the caller crosses only a CHANGE.

@@ -132,6 +132,10 @@ typedef struct {
     int32_t         widescreen;      /* PS1_WIDESCREEN_*: the GTE hack, and the
                                       * shape the picture and a screenshot
                                       * are drawn at. */
+    int32_t         cd_read_speedup; /* 1..10: times the real drive's read
+                                      * speed for double-speed data; the
+                                      * session forces a listed game's to 1. */
+    int32_t         cd_seek_speedup; /* 1..10, likewise for seeks. */
 } Ps1SessionSettings;
 
 typedef struct {

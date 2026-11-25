@@ -35,7 +35,7 @@ test "aPresetFieldOverridesThePlayers" {
     inline for (switches) |name| {
         var preset: Preset = .{ .serial = "TEST-00000" };
         @field(preset, name) = true;
-        const f = settings.fold(.{ .use_presets = true }, .on, preset, false, null);
+        const f = settings.fold(.{ .use_presets = true }, .on, preset, false, null, .{});
         inline for (switches) |other| {
             try expectEqual(comptime std.mem.eql(u8, name, other), folded(f, other));
         }
@@ -44,28 +44,28 @@ test "aPresetFieldOverridesThePlayers" {
 
 test "aPresetToleranceReplacesThePlayers" {
     const player: Settings = .{ .use_presets = true, .pgxp = .{ .tolerance = -1 } };
-    const with = settings.fold(player, .on, .{ .serial = "T", .tolerance = 2.0 }, false, null);
+    const with = settings.fold(player, .on, .{ .serial = "T", .tolerance = 2.0 }, false, null, .{});
     try expectEqual(@as(f32, 2.0), with.pgxp.tolerance);
-    const without = settings.fold(player, .on, .{ .serial = "T" }, false, null);
+    const without = settings.fold(player, .on, .{ .serial = "T" }, false, null, .{});
     try expectEqual(@as(f32, -1), without.pgxp.tolerance);
 }
 
 test "transparentDepthIsAlwaysThePlayers" {
     const player: Settings = .{ .use_presets = true, .pgxp = .{ .transparent_depth = true } };
-    const f = settings.fold(player, .on, .{ .serial = "T", .enabled = false }, false, null);
+    const f = settings.fold(player, .on, .{ .serial = "T", .enabled = false }, false, null, .{});
     try expect(f.pgxp.transparent_depth);
     try expect(!f.pgxp.enabled);
 }
 
 test "presetsOffIgnoresTheRow" {
     const player: Settings = .{ .use_presets = false };
-    const f = settings.fold(player, .on, .{ .serial = "T", .cpu = true, .disable_2d = true }, false, null);
+    const f = settings.fold(player, .on, .{ .serial = "T", .cpu = true, .disable_2d = true }, false, null, .{});
     try expect(std.meta.eql(f.pgxp, player.pgxp));
     try expect(!f.vertex_cache);
 }
 
 test "eachReadbacksChoiceResolvesTheMode" {
-    const Mode = @TypeOf(settings.fold(.{}, .on, null, false, null).vram);
+    const Mode = @TypeOf(settings.fold(.{}, .on, null, false, null, .{}).vram);
     const cases = [_]struct { settings.VramReadbacks, bool, Mode }{
         .{ .automatic, false, .gpu },
         .{ .automatic, true, .dual },
@@ -75,7 +75,7 @@ test "eachReadbacksChoiceResolvesTheMode" {
         .{ .off, true, .gpu },
     };
     for (cases) |c| {
-        try expectEqual(c[2], settings.fold(.{}, c[0], null, c[1], null).vram);
+        try expectEqual(c[2], settings.fold(.{}, c[0], null, c[1], null, .{}).vram);
     }
 }
 
@@ -151,13 +151,26 @@ test "serialOfReadsTheEbootDiscItIsAsked" {
 }
 
 test "the overclock table applies only while the player's is off" {
-    try expectEqual(95, settings.fold(.{}, .on, null, false, 95).cpu_overclock);
-    try expectEqual(150, settings.fold(.{ .cpu_overclock = 150 }, .on, null, false, 95).cpu_overclock);
-    try expectEqual(100, settings.fold(.{}, .on, null, false, null).cpu_overclock);
+    try expectEqual(95, settings.fold(.{}, .on, null, false, 95, .{}).cpu_overclock);
+    try expectEqual(150, settings.fold(.{ .cpu_overclock = 150 }, .on, null, false, 95, .{}).cpu_overclock);
+    try expectEqual(100, settings.fold(.{}, .on, null, false, null, .{}).cpu_overclock);
     // Not gated on the presets switch, as the PGXP rows are.
-    try expectEqual(95, settings.fold(.{ .use_presets = false }, .on, null, false, 95).cpu_overclock);
+    try expectEqual(95, settings.fold(.{ .use_presets = false }, .on, null, false, 95, .{}).cpu_overclock);
     try expectEqual(95, settings.forSerial(.{}, .automatic, "SLES-00275").cpu_overclock);
     try expectEqual(100, settings.forSerial(.{}, .automatic, "").cpu_overclock);
+}
+
+test "a listed game's disabled CD direction is 1x and the other keeps the player's" {
+    const Speedup = ps1_core.speedup.Speedup;
+    const player: Settings = .{ .cd_speedup = .{ .read = .x4, .seek = .x6 } };
+    // Read only (SCES-02080), both (SLUS-00952), neither (SLUS-00707), and no serial.
+    try expectEqual(Speedup{ .read = .x1, .seek = .x6 }, settings.forSerial(player, .automatic, "SCES-02080").cd_speedup);
+    try expectEqual(Speedup{ .read = .x1, .seek = .x1 }, settings.forSerial(player, .automatic, "SLUS-00952").cd_speedup);
+    try expectEqual(player.cd_speedup, settings.forSerial(player, .automatic, "SLUS-00707").cd_speedup);
+    try expectEqual(player.cd_speedup, settings.forSerial(player, .automatic, "").cd_speedup);
+    // Not gated on the presets switch, and the default is the identity.
+    try expectEqual(Speedup{ .read = .x1, .seek = .x6 }, settings.forSerial(.{ .use_presets = true, .cd_speedup = player.cd_speedup }, .automatic, "SCES-02080").cd_speedup);
+    try expectEqual(Speedup{}, settings.forSerial(.{}, .automatic, "SCES-02080").cd_speedup);
 }
 
 /// The value `#define <name>` carries in `ps1_session.h`.

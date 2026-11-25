@@ -72,6 +72,9 @@ pub const Controls = struct {
     cpu_overclock: Atomic(u32) = .init(100),
     /// `Widescreen`, re-applied every frame.
     widescreen: Atomic(u8) = .init(0),
+    /// The folded CD read and seek speedups (`Factor`), re-applied every frame.
+    cd_read_speedup: Atomic(u8) = .init(1),
+    cd_seek_speedup: Atomic(u8) = .init(1),
     /// `PS1_SOFTWARE_DISPLAY` / `PS1_LIVE_DIFF`: their readers need the
     /// shadow of every frame. Set once, before the thread starts.
     shadow_every_frame: bool = false,

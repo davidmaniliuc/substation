@@ -157,6 +157,7 @@ test "FramePath: theVertexCacheEngineAndRewindBudgetCrossOnlyOnChange" {
     // overclock, which the core ignores unchanged.
     try expectEqual(2, r.m.count("applyPgxp"));
     try expectEqual(2, r.m.count("setCpuOverclock"));
+    try expectEqual(2, r.m.count("setCdSpeedup"));
 }
 
 test "FramePath: aRefusedEngineIsNotRetried" {

@@ -240,6 +240,12 @@ pub const FakeMachine = struct {
         self.log("setWidescreen");
     }
 
+    pub fn setCdSpeedup(self: *FakeMachine, read: u8, seek: u8) void {
+        _ = read;
+        _ = seek;
+        self.log("setCdSpeedup");
+    }
+
     pub fn setVertexCache(self: *FakeMachine, on: bool) void {
         _ = on;
         self.log("setVertexCache");

@@ -2,11 +2,12 @@
 //! into what the machine is given: a game's PGXP preset replaces the player's
 //! switches wherever the row names one, and the VRAM mode follows the
 //! readbacks choice over the per-game table. A game's CPU overclock applies
-//! while the player's own is off.
+//! while the player's own is off. A game's CD speedup table row forces the
+//! direction it disables back to 1x.
 //!
 //! Pure: no session state, so the whole rule is testable without a machine.
 //! The tables are the core's (`pgxp_presets`, `vram_readbacks`,
-//! `cpu_overclock`), read only.
+//! `cpu_overclock`, `cd_speedup`), read only.
 
 const std = @import("std");
 const capi = @import("ps1_capi");
@@ -47,28 +48,34 @@ pub const Settings = struct {
     cpu_overclock: u32 = 100,
     display_effect: metal.display.Effect = .none,
     widescreen: ps1_core.widescreen.Widescreen = .off,
+    /// The player's CD speedup; 1x is off. A listed game's disabled
+    /// direction is forced back to 1x in the fold.
+    cd_speedup: ps1_core.speedup.Speedup = .{},
 };
 
 /// What the fold decides: the PGXP switches and vertex cache the machine is
-/// given, and its VRAM mode.
+/// given, its VRAM mode, its CPU clock and its CD speedup.
 pub const Folded = struct {
     pgxp: machine.Pgxp,
     vertex_cache: bool,
     vram: capi.VramMode,
     cpu_overclock: u32,
+    cd_speedup: ps1_core.speedup.Speedup,
 };
 
 /// `readbacks` is separate from `s.vram_readbacks` because the session's
 /// choice for a disc can differ from the player's. `transparent_depth` is
 /// never a preset field: it stays the player's. The overclock row is not
 /// gated on `use_presets`: it works around a crash, and the player's own
-/// setting already wins whenever it is on.
+/// setting already wins whenever it is on. Nor is the CD speedup row: a
+/// direction it disables is 1x whatever the player asked for.
 pub fn fold(
     s: Settings,
     readbacks: VramReadbacks,
     preset: ?ps1_core.pgxp_presets.Preset,
     needs_dual: bool,
     overclock: ?u32,
+    cd_disabled: ps1_core.cd_speedup.Disabled,
 ) Folded {
     var out: Folded = .{
         .pgxp = s.pgxp,
@@ -79,6 +86,10 @@ pub fn fold(
             .automatic => if (needs_dual) .dual else .gpu,
         },
         .cpu_overclock = if (s.cpu_overclock == 100) overclock orelse 100 else s.cpu_overclock,
+        .cd_speedup = .{
+            .read = if (cd_disabled.read) .x1 else s.cd_speedup.read,
+            .seek = if (cd_disabled.seek) .x1 else s.cd_speedup.seek,
+        },
     };
     if (!s.use_presets) return out;
     const p = preset orelse return out;
@@ -103,7 +114,7 @@ pub fn fold(
 pub fn forSerial(s: Settings, readbacks: VramReadbacks, serial: []const u8) Folded {
     const preset = if (serial.len == 0) null else ps1_core.pgxp_presets.lookup(serial);
     const overclock = if (serial.len == 0) null else ps1_core.cpu_overclock.lookup(serial);
-    return fold(s, readbacks, preset, ps1_core.vram_readbacks.needsDual(serial), overclock);
+    return fold(s, readbacks, preset, ps1_core.vram_readbacks.needsDual(serial), overclock, ps1_core.cd_speedup.lookup(serial));
 }
 
 /// The serial a disc image names, with its `cue` (an Alcohol sheet, say) and

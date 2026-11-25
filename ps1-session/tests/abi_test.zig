@@ -52,6 +52,8 @@ fn settingsValue() abi.Ps1SessionSettings {
         .cpu_overclock = 0,
         .display_effect = 0,
         .widescreen = 0,
+        .cd_read_speedup = 1,
+        .cd_seek_speedup = 1,
     };
 }
 
@@ -216,8 +218,8 @@ test "SessionAbi: noEventAfterFree" {
     try expectEqual(seen, rates.count.load(.acquire));
 }
 
-test "SessionAbi: theSettingsStructIsSeventyTwoBytes" {
-    try expectEqual(72, @sizeOf(abi.Ps1SessionSettings));
+test "SessionAbi: theSettingsStructIsEightyBytes" {
+    try expectEqual(80, @sizeOf(abi.Ps1SessionSettings));
     try expectEqual(40, @offsetOf(abi.Ps1SessionSettings, "pgxp"));
     try expectEqual(60, @offsetOf(abi.Ps1SessionSettings, "cpu_overclock"));
     // The effect took the padding the overclock left and a new eight bytes
@@ -225,6 +227,9 @@ test "SessionAbi: theSettingsStructIsSeventyTwoBytes" {
     try expectEqual(64, @offsetOf(abi.Ps1SessionSettings, "display_effect"));
     // The widescreen mode took the effect's tail padding.
     try expectEqual(68, @offsetOf(abi.Ps1SessionSettings, "widescreen"));
+    // The two CD speedups grew the struct by one 8-byte row.
+    try expectEqual(72, @offsetOf(abi.Ps1SessionSettings, "cd_read_speedup"));
+    try expectEqual(76, @offsetOf(abi.Ps1SessionSettings, "cd_seek_speedup"));
 }
 
 test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
@@ -398,4 +403,53 @@ test "SessionAbi: theWidescreenModeReachesTheMachineAndTheRenderer" {
     p.widescreen = 0;
     try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
     try expectEqual(.off, s.settings.widescreen);
+}
+
+test "SessionAbi: theCdSpeedupReachesTheMachineAndAnOutOfRangeValueKeepsTheHeldOne" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    p.cd_read_speedup = 4;
+    p.cd_seek_speedup = 10;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.x4, s.player.cd_speedup.read);
+    try expectEqual(.x10, s.player.cd_speedup.seek);
+    try expectEqual(@as(u8, 4), s.loop.controls.cd_read_speedup.load(.acquire));
+    try expectEqual(@as(u8, 10), s.loop.controls.cd_seek_speedup.load(.acquire));
+    for ([_]i32{ 0, 11, -1, 99 }) |bad| {
+        p.cd_read_speedup = bad;
+        p.cd_seek_speedup = bad;
+        try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+        try expectEqual(.x4, s.player.cd_speedup.read);
+        try expectEqual(.x10, s.player.cd_speedup.seek);
+    }
+}
+
+fn serialOf(comptime text: []const u8) session.settings.Serial {
+    var out: session.settings.Serial = @splat(0);
+    @memcpy(out[0..text.len], text);
+    return out;
+}
+
+test "SessionAbi: aSwappedInDiscForcesItsDisabledCdDirectionToOneX" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    p.cd_read_speedup = 4;
+    p.cd_seek_speedup = 6;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    const c = &s.loop.controls;
+
+    // Listed for the read only: its seek stays at the player's value.
+    s.discChanged(serialOf("SCES-02080"), .on);
+    try expectEqual(@as(u8, 1), c.cd_read_speedup.load(.acquire));
+    try expectEqual(@as(u8, 6), c.cd_seek_speedup.load(.acquire));
+    // Listed for both.
+    s.discChanged(serialOf("SLUS-00952"), .on);
+    try expectEqual(@as(u8, 1), c.cd_read_speedup.load(.acquire));
+    try expectEqual(@as(u8, 1), c.cd_seek_speedup.load(.acquire));
+    // An unlisted disc takes the player's values back.
+    s.discChanged(serialOf("SLUS-00707"), .on);
+    try expectEqual(@as(u8, 4), c.cd_read_speedup.load(.acquire));
+    try expectEqual(@as(u8, 6), c.cd_seek_speedup.load(.acquire));
 }
