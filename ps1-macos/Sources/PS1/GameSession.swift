@@ -96,6 +96,10 @@ struct SessionSettings: Equatable, Sendable {
     var cpuOverclock: Int = 100
     var displayEffect: DisplayEffect = .none
     var widescreen: Widescreen = .off
+    /// The player's CD speedups, 1 to 10 times the real drive. The session
+    /// folds the per-game table that holds a known game to 1.
+    var cdReadSpeedup: Int = CdSpeedupSetting.defaultFactor
+    var cdSeekSpeedup: Int = CdSpeedupSetting.defaultFactor
 
     var c: Ps1SessionSettings {
         Ps1SessionSettings(
@@ -113,7 +117,9 @@ struct SessionSettings: Equatable, Sendable {
             vram_readbacks: UInt8(vramReadbacks.rawValue),
             cpu_overclock: Int32(clamping: cpuOverclock),
             display_effect: Int32(displayEffect.rawValue),
-            widescreen: Int32(widescreen.rawValue))
+            widescreen: Int32(widescreen.rawValue),
+            cd_read_speedup: Int32(clamping: cdReadSpeedup),
+            cd_seek_speedup: Int32(clamping: cdSeekSpeedup))
     }
 }
 

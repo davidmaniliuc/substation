@@ -686,7 +686,9 @@ public final class EmulatorViewModel {
                         vramReadbacks: vramReadbacks,
                         cpuOverclock: cpuOverclockSetting.effective,
                         displayEffect: displayEffect,
-                        widescreen: widescreen)
+                        widescreen: widescreen,
+                        cdReadSpeedup: cdSpeedupSetting.read,
+                        cdSeekSpeedup: cdSpeedupSetting.seek)
     }
 
     /// The one hand-over of every setting to the session.
@@ -731,6 +733,27 @@ public final class EmulatorViewModel {
     func cpuOverclock(for game: OpenGame) -> Int {
         if cpuOverclockSetting.enabled { return cpuOverclockSetting.percent }
         return Ps1Core.cpuOverclock(serial: game.discSerial) ?? CpuOverclockSetting.defaultPercent
+    }
+
+    /// The CD read and seek speedups: persisted, pushed to the session,
+    /// carried by a new one's config. The player's values only: the session
+    /// holds the games known to break to 1x.
+    private var cdSpeedupSetting = CdSpeedupSetting()
+
+    var cdReadSpeedup: Int {
+        get { cdSpeedupSetting.read }
+        set {
+            cdSpeedupSetting.setRead(newValue)
+            pushSettings()
+        }
+    }
+
+    var cdSeekSpeedup: Int {
+        get { cdSpeedupSetting.seek }
+        set {
+            cdSpeedupSetting.setSeek(newValue)
+            pushSettings()
+        }
     }
 
     /// Runahead: persisted, pushed to the session, carried by a new one's config.

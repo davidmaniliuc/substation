@@ -45,6 +45,23 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("CD Drive") {
+                SettingRow(SettingsCopy.cdReadSpeed) {
+                    Picker(SettingsCopy.cdReadSpeed.title, selection: $model.cdReadSpeedup) {
+                        ForEach(CdSpeedupSetting.choices, id: \.self) { Text(CdSpeedupSetting.title($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                SettingRow(SettingsCopy.cdSeekSpeed) {
+                    Picker(SettingsCopy.cdSeekSpeed.title, selection: $model.cdSeekSpeedup) {
+                        ForEach(CdSpeedupSetting.choices, id: \.self) { Text(CdSpeedupSetting.title($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Input Lag") {
                 SettingRow(SettingsCopy.runahead) {
                     Picker(SettingsCopy.runahead.title, selection: $model.runaheadFrames) {

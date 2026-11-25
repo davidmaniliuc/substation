@@ -6,7 +6,7 @@ import Testing
 /// `SessionSettings` as it crosses `ps1_session_set_settings`.
 struct SessionSettingsTests {
     @Test func theHeaderAgreesOnTheSize() {
-        #expect(MemoryLayout<Ps1SessionSettings>.size == 72)
+        #expect(MemoryLayout<Ps1SessionSettings>.size == 80)
     }
 
     @Test func aSettingsValueCrossesFieldForField() {
@@ -17,10 +17,13 @@ struct SessionSettingsTests {
         let s = SessionSettings(gain: 0.5, cpuEngine: .recompiler, runaheadFrames: 2,
                                 rewindBudget: 256 << 20, scale: 4, dither: .native,
                                 textureFilter: .bilinear, spriteFilter: .mmpxAdvanced, pgxp: pgxp,
-                                pgxpUsePresets: true, vramReadbacks: .off, displayEffect: .crt)
+                                pgxpUsePresets: true, vramReadbacks: .off, displayEffect: .crt,
+                                cdReadSpeedup: 2, cdSeekSpeedup: 7)
         let c = s.c
-        #expect(c.size == 72)
+        #expect(c.size == 80)
         #expect(c.gain == 0.5)
+        #expect(c.cd_read_speedup == 2)
+        #expect(c.cd_seek_speedup == 7)
         #expect(c.cpu_engine == 2)
         #expect(c.runahead == 2)
         #expect(c.rewind_budget == 256 << 20)
@@ -117,6 +120,8 @@ private func makeEntry(serial: String) throws -> GameEntry {
             #expect(s.pgxp.cpu == model.pgxpCpu)
             #expect(s.pgxpUsePresets == model.pgxpUsePresets)
             #expect(s.cpuOverclock == model.cpuOverclockEffective)
+            #expect(s.cdReadSpeedup == model.cdReadSpeedup)
+            #expect(s.cdSeekSpeedup == model.cdSeekSpeedup)
             #expect(s.gain == (model.isMuted ? 0 : Float(model.volume)))
             let start = try #require(session.calls.firstIndex(of: "start()"))
             #expect(!session.calls[..<start].contains("setSettings"))
@@ -170,6 +175,10 @@ private func makeEntry(serial: String) throws -> GameEntry {
                 return { m.cpuOverclockEnabled = o } }),
             ("clock speed", { m in let o = m.cpuOverclockPercent; m.cpuOverclockPercent = o == 200 ? 150 : 200
                 return { m.cpuOverclockPercent = o } }),
+            ("cd read speed", { m in let o = m.cdReadSpeedup; m.cdReadSpeedup = o == 2 ? 1 : 2
+                return { m.cdReadSpeedup = o } }),
+            ("cd seek speed", { m in let o = m.cdSeekSpeedup; m.cdSeekSpeedup = o == 4 ? 1 : 4
+                return { m.cdSeekSpeedup = o } }),
         ]
         try withSuite { defaults in
             let model = makeModel(defaults)

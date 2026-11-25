@@ -27,6 +27,16 @@ enum SettingsCopy {
         description: "Some games misbehave away from 100%."
     )
 
+    static let cdReadSpeed = SettingInfo(
+        title: "CD Read Speed",
+        description: "Loads game data faster; music and movies keep real speed."
+    )
+
+    static let cdSeekSpeed = SettingInfo(
+        title: "CD Seek Speed",
+        description: "Shortens the wait while the drive finds data on the disc."
+    )
+
     static let runahead = SettingInfo(
         title: "Runahead",
         description: "Reduces the delay between pressing a button and seeing the result. Higher values require more processing power."
@@ -272,7 +282,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
+        speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, cdReadSpeed, cdSeekSpeed, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering, widescreen, displayEffect, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
