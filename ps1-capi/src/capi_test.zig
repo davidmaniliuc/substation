@@ -2385,3 +2385,56 @@ test "ps1_lookup_cpu_overclock reads the table" {
     try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_cpu_overclock("SLUS-00707", &percent));
     try std.testing.expectEqual(@as(u32, 7), percent);
 }
+
+test "ps1_set_cd_speedup reaches the drive and an out-of-range value is 1x" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_cd_speedup(h, 4, 10);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x4, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x10, h.cpu.bus.cdrom.speedup.seek);
+    capi.ps1_set_cd_speedup(h, 0, 11);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.seek);
+    capi.ps1_set_cd_speedup(h, -3, 2);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x1, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x2, h.cpu.bus.cdrom.speedup.seek);
+}
+
+test "a reset and a state load keep the CD speedup, and a state never carries it" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const plain = try saveState(h);
+    defer std.testing.allocator.free(plain);
+    capi.ps1_set_cd_speedup(h, 6, 3);
+    const sped = try saveState(h);
+    defer std.testing.allocator.free(sped);
+    try std.testing.expectEqualSlices(u8, plain, sped);
+
+    capi.ps1_reset(h);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, sped.ptr, sped.len));
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x6, h.cpu.bus.cdrom.speedup.read);
+    try std.testing.expectEqual(ps1_core.speedup.Factor.x3, h.cpu.bus.cdrom.speedup.seek);
+}
+
+test "a fresh machine runs the CD at 1x" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(ps1_core.speedup.Speedup{}, h.cpu.bus.cdrom.speedup);
+}
+
+test "ps1_lookup_cd_speedup reads the table" {
+    var read_ok: c_int = -1;
+    var seek_ok: c_int = -1;
+    // Listed for the read only: the seek stays allowed.
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_cd_speedup("SCES-02080", &read_ok, &seek_ok));
+    try std.testing.expectEqual(@as(c_int, 0), read_ok);
+    try std.testing.expectEqual(@as(c_int, 1), seek_ok);
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_cd_speedup("SLUS-00952", &read_ok, &seek_ok));
+    try std.testing.expectEqual(@as(c_int, 0), read_ok);
+    try std.testing.expectEqual(@as(c_int, 0), seek_ok);
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_cd_speedup("SLUS-00707", &read_ok, &seek_ok));
+    try std.testing.expectEqual(@as(c_int, 1), read_ok);
+    try std.testing.expectEqual(@as(c_int, 1), seek_ok);
+}

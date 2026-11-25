@@ -366,6 +366,7 @@ const HostSettings = struct {
     preserve_projection: bool,
     cpu_overclock: u32,
     widescreen: ps1.widescreen.Widescreen,
+    cd_speedup: ps1.speedup.Speedup,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -385,6 +386,7 @@ const HostSettings = struct {
             .preserve_projection = bus.pgxp_preserve_projection,
             .cpu_overclock = bus.cpu_overclock.percent(),
             .widescreen = bus.widescreen,
+            .cd_speedup = bus.cdrom.speedup,
         };
     }
 
@@ -401,6 +403,7 @@ const HostSettings = struct {
         bus.pgxp_preserve_projection = s.preserve_projection;
         bus.setCpuOverclock(s.cpu_overclock);
         bus.widescreen = s.widescreen;
+        bus.cdrom.speedup = s.cd_speedup;
         // Last, because it is what mirrors the rest onto the GPU.
         bus.setPgxp(s.on);
     }
@@ -1003,6 +1006,17 @@ pub export fn ps1_lookup_cpu_overclock(serial: [*:0]const u8, percent: *u32) u8 
     return 1;
 }
 
+/// Looks a serial up in the CD speedup table. Sets `read_ok` and `seek_ok` to
+/// whether that direction may be sped up (both 1 for an unlisted serial) and
+/// returns whether the serial is listed. Applies nothing: the frontend folds it
+/// into the speedup it asks for.
+pub export fn ps1_lookup_cd_speedup(serial: [*:0]const u8, read_ok: *c_int, seek_ok: *c_int) u8 {
+    const row = ps1.cd_speedup.lookup(std.mem.span(serial));
+    read_ok.* = @intFromBool(!row.read);
+    seek_ok.* = @intFromBool(!row.seek);
+    return @intFromBool(row.read or row.seek);
+}
+
 fn override(value: ?bool) i8 {
     const v = value orelse return -1;
     return @intFromBool(v);
@@ -1298,6 +1312,14 @@ pub export fn ps1_set_cpu_overclock(h: *Handle, percent: u32) void {
 /// The GTE widescreen hack, `PS1_WIDESCREEN_*`. A value out of range is off.
 pub export fn ps1_set_widescreen(h: *Handle, mode: c_int) void {
     h.cpu.bus.widescreen = if (mode >= 0) std.enums.fromInt(ps1.widescreen.Widescreen, mode) orelse .off else .off;
+}
+
+/// The CD speedup, each 1 to 10 times the real drive; a value out of range is 1.
+pub export fn ps1_set_cd_speedup(h: *Handle, read: c_int, seek: c_int) void {
+    h.cpu.bus.cdrom.speedup = .{
+        .read = ps1.speedup.Factor.fromInt(read) orelse .x1,
+        .seek = ps1.speedup.Factor.fromInt(seek) orelse .x1,
+    };
 }
 
 /// The engine the machine is running on now.

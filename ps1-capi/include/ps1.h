@@ -380,6 +380,12 @@ uint8_t ps1_game_needs_dual_vram(const char* serial);
  * folds it, under the player's own setting. */
 uint8_t ps1_lookup_cpu_overclock(const char* serial, uint32_t* percent);
 
+/* Looks up a SYSTEM.CNF serial in the bundled CD speedup table. Writes whether
+ * each direction may be sped up (1) or not (0), both 1 for an unknown serial,
+ * and returns 1 when the serial is listed. Applies nothing: a session folds it
+ * in itself; for a bare handle its host forces a disabled direction to 1. */
+uint8_t ps1_lookup_cd_speedup(const char* serial, int* read_ok, int* seek_ok);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */
@@ -513,6 +519,12 @@ void    ps1_set_cpu_overclock(Ps1*, uint32_t percent);
 #define PS1_WIDESCREEN_16_9  2
 #define PS1_WIDESCREEN_21_9  3
 void    ps1_set_widescreen(Ps1*, int widescreen);
+
+/* The CD speedup: how many times faster than the real drive a read and a seek
+ * run, each 1 to 10; anything else is 1. Only double-speed data reads speed
+ * up, never XA or CD-DA. Not part of a save state. Idempotent: safe every
+ * frame. */
+void    ps1_set_cd_speedup(Ps1*, int read, int seek);
 
 /* The engine the machine is running on now. */
 int     ps1_get_cpu_engine(const Ps1*);
