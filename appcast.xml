@@ -4,17 +4,17 @@
     <title>Substation</title>
     <link>https://github.com/davidmaniliuc/substation</link>
     <item>
-      <title>Substation 0.9.3 (e0d8a5d)</title>
-      <pubDate>Mon, 23 Nov 2026 15:27:18 +0000</pubDate>
-      <link>https://github.com/davidmaniliuc/substation/releases/tag/v0.9.3</link>
-      <sparkle:version>1289</sparkle:version>
-      <sparkle:shortVersionString>0.9.3</sparkle:shortVersionString>
+      <title>Substation 0.9.4 (192f2e0)</title>
+      <pubDate>Thu, 26 Nov 2026 07:17:06 +0000</pubDate>
+      <link>https://github.com/davidmaniliuc/substation/releases/tag/v0.9.4</link>
+      <sparkle:version>1331</sparkle:version>
+      <sparkle:shortVersionString>0.9.4</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
       <description><![CDATA[
-        <p>Substation 0.9.3, built from commit <a href="https://github.com/davidmaniliuc/substation/commit/e0d8a5d929151803cececfae0b3a4bce4d93630a">e0d8a5d</a>. Alpha software: expect crashes and missing features.</p>
-        <p><a href="https://github.com/davidmaniliuc/substation/releases/tag/v0.9.3">Full release notes on GitHub</a></p>
+        <p>Substation 0.9.4, built from commit <a href="https://github.com/davidmaniliuc/substation/commit/192f2e0e6d5117a6d6b9b7161b3eeb4b6e3ad20c">192f2e0</a>. Alpha software: expect crashes and missing features.</p>
+        <p><a href="https://github.com/davidmaniliuc/substation/releases/tag/v0.9.4">Full release notes on GitHub</a></p>
       ]]></description>
-      <enclosure url="https://github.com/davidmaniliuc/substation/releases/download/v0.9.3/Substation-0.9.3.dmg" type="application/octet-stream" sparkle:edSignature="6PmEeCv/JdebG4XmF2Nwfc5Sgpd1oqwx0fnwfOMhiyAzb91oFpPe/baaRSRuO0hdA01XxoQ7JYE3+S47+FS5AA==" length="6149888" />
+      <enclosure url="https://github.com/davidmaniliuc/substation/releases/download/v0.9.4/Substation-0.9.4.dmg" type="application/octet-stream" sparkle:edSignature="54Tk7Dy28aDAkWJhG+jMj3t9kCvnPMTLWWZiUl8pp85S57L4n2Tv3sXAcuLY84EFSqZEWnrs1Q3TsA3B/t+PBQ==" length="6279893" />
     </item>
   </channel>
 </rss>
