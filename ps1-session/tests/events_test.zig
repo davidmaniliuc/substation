@@ -141,3 +141,20 @@ test "Events: noSinkSendsNothingAndKeepsState" {
     e.pad(1);
     try expectEqual(0, rec.len);
 }
+
+test "Events: port2PadStatusCoalescesIndependentlyAsPad2" {
+    var rec: Recorder = .{};
+    var e: Events = .{ .sink = rec.sink() };
+    e.portPad(1, 0);
+    try expectEqual(0, rec.len);
+    e.portPad(1, 1 | 255 << 8 | 0x60 << 16);
+    try expectEqual(1, rec.len);
+    try expectEqual(@backingInt(events.Kind.pad2), rec.last().kind);
+    try expectEqual(session.capi.Ps1PadStatus{ .analog = 1, .small = 255, .large = 0x60 }, rec.last().pad);
+    // Port 1 change does not interfere with Port 2's coalescing.
+    e.portPad(0, 1);
+    try expectEqual(2, rec.len);
+    try expectEqual(@backingInt(events.Kind.pad), rec.last().kind);
+    e.portPad(1, 1 | 255 << 8 | 0x60 << 16);
+    try expectEqual(2, rec.len);
+}

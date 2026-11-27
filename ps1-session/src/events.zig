@@ -11,7 +11,7 @@
 const std = @import("std");
 const capi = @import("ps1_capi");
 
-pub const Kind = enum(i32) { pad = 0, card_write = 1, rewind = 2, frame_rate = 3 };
+pub const Kind = enum(i32) { pad = 0, card_write = 1, rewind = 2, frame_rate = 3, pad2 = 4 };
 
 /// ps1_session.h's Ps1Event: valid only during the call. A field its kind
 /// does not use is zero.
@@ -69,7 +69,7 @@ pub const Events = struct {
     /// keeps its state.
     sink: ?Sink = null,
     /// Idle, which is what a host assumes of a new session: digital, still.
-    last_pad: u32 = 0,
+    last_pad: [2]u32 = .{ 0, 0 },
     /// Null so a session's first rewind value is always sent.
     last_rewind_frames: ?u32 = null,
     frame_rate: FrameRate = .{},
@@ -77,9 +77,14 @@ pub const Events = struct {
     /// `status` packed as `RunLoop.pad_status`: analog in bit 0, the small
     /// motor in bits 8-15, the large in 16-23.
     pub fn pad(self: *Events, status: u32) void {
-        if (status == self.last_pad) return;
-        self.last_pad = status;
-        self.send(.{ .kind = @backingInt(Kind.pad), .pad = .{
+        self.portPad(0, status);
+    }
+
+    pub fn portPad(self: *Events, port: u1, status: u32) void {
+        if (status == self.last_pad[port]) return;
+        self.last_pad[port] = status;
+        const kind: Kind = if (port == 0) .pad else .pad2;
+        self.send(.{ .kind = @backingInt(kind), .pad = .{
             .analog = @intCast(status & 1),
             .small = @truncate(status >> 8),
             .large = @truncate(status >> 16),

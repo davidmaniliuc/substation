@@ -41,6 +41,10 @@ pub const FakeMachine = struct {
     fail_engine: bool = false,
     fail_mark: bool = false,
     pad: u32 = 0,
+    pad2: u32 = 0,
+    pad_connected: [2]bool = .{ true, false },
+    buttons: [2]u16 = .{ 0xFFFF, 0xFFFF },
+    sticks: [2][4]u8 = .{ .{ 0x80, 0x80, 0x80, 0x80 }, .{ 0x80, 0x80, 0x80, 0x80 } },
     /// Which slots `takeMemcard` reports dirty, cleared as it reports them.
     dirty_cards: [2]bool = .{ false, false },
     card_fill: u8 = 0xC4,
@@ -196,22 +200,27 @@ pub const FakeMachine = struct {
         if (self.fail_swap) return error.BadCue;
     }
 
-    pub fn setButtons(self: *FakeMachine, mask: u16) void {
-        _ = mask;
-        self.log("setButtons");
+    pub fn setPadConnected(self: *FakeMachine, port: u1, connected: bool) void {
+        self.pad_connected[port] = connected;
+        self.log(if (port == 0) "setPadConnected" else "setPort2Connected");
     }
 
-    pub fn setAnalog(self: *FakeMachine, sticks: [4]u8) void {
-        _ = sticks;
-        self.log("setAnalog");
+    pub fn setPortButtons(self: *FakeMachine, port: u1, mask: u16) void {
+        self.buttons[port] = mask;
+        self.log(if (port == 0) "setButtons" else "setPort2Buttons");
     }
 
-    pub fn pressAnalogButton(self: *FakeMachine) void {
-        self.log("pressAnalogButton");
+    pub fn setPortAnalog(self: *FakeMachine, port: u1, sticks: [4]u8) void {
+        self.sticks[port] = sticks;
+        self.log(if (port == 0) "setAnalog" else "setPort2Analog");
     }
 
-    pub fn padStatus(self: *FakeMachine) u32 {
-        return self.pad;
+    pub fn pressPortAnalogButton(self: *FakeMachine, port: u1) void {
+        self.log(if (port == 0) "pressAnalogButton" else "pressPort2AnalogButton");
+    }
+
+    pub fn portPadStatus(self: *FakeMachine, port: u1) u32 {
+        return if (port == 0) self.pad else self.pad2;
     }
 
     pub fn takeMemcard(self: *FakeMachine, slot: u1, dst: *[card_bytes]u8) bool {

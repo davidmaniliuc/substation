@@ -69,10 +69,11 @@ typedef struct {
     uint32_t       disc;                /* which disc of an eboot; else 0 */
 } Ps1DiscBytes;
 
-#define PS1_EVENT_PAD        0   /* `pad` */
+#define PS1_EVENT_PAD        0   /* `pad` (Port 1) */
 #define PS1_EVENT_CARD_WRITE 1   /* `card_writes`: the running count */
 #define PS1_EVENT_REWIND     2   /* `value`: seconds of history left */
 #define PS1_EVENT_FRAME_RATE 3   /* `value`: frames per second */
+#define PS1_EVENT_PAD2       4   /* `pad` (Port 2) */
 
 /* One event (rule 6). A field its kind does not use is zero. */
 typedef struct {
@@ -205,6 +206,10 @@ int32_t ps1_session_set_settings(Ps1Session*, const Ps1SessionSettings*);
 void ps1_session_set_buttons(Ps1Session*, uint16_t mask); /* as ps1_set_buttons */
 void ps1_session_set_sticks(Ps1Session*, uint8_t lx, uint8_t ly, uint8_t rx, uint8_t ry);
 void ps1_session_press_analog(Ps1Session*);
+void ps1_session_set_port_connected(Ps1Session*, int32_t port, uint8_t connected);
+void ps1_session_set_port_buttons(Ps1Session*, int32_t port, uint16_t mask);
+void ps1_session_set_port_sticks(Ps1Session*, int32_t port, uint8_t lx, uint8_t ly, uint8_t rx, uint8_t ry);
+void ps1_session_press_port_analog(Ps1Session*, int32_t port);
 void ps1_session_set_speed(Ps1Session*, int32_t speed);   /* 1 = real time */
 void ps1_session_set_paused(Ps1Session*, uint8_t paused);
 void ps1_session_set_rewinding(Ps1Session*, uint8_t rewinding);
@@ -232,6 +237,7 @@ void ps1_session_request_screenshot(Ps1Session*, Ps1ScreenshotDone done, void* c
  * the same news as events (rule 6). */
 uint64_t ps1_session_frames_produced(Ps1Session*);
 void     ps1_session_pad_status(Ps1Session*, Ps1PadStatus* out);
+void     ps1_session_port_pad_status(Ps1Session*, int32_t port, Ps1PadStatus* out);
 uint64_t ps1_session_card_writes(Ps1Session*);
 double   ps1_session_rewind_seconds(Ps1Session*);
 /* `pal` is always 0: the session does not carry it. */

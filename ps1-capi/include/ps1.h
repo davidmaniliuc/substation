@@ -423,6 +423,18 @@ typedef struct {
  * poll resumes rumble with no special case. */
 void    ps1_get_pad_status(Ps1*, Ps1PadStatus* out);
 
+/* Controller ports (0 = Port 1, 1 = Port 2). Port 1 defaults connected,
+ * Port 2 disconnected. Unplugging powers that pad down (digital, motors
+ * stopped). Host configuration: survives ps1_reset and ps1_load_state.
+ * An out-of-range port is ignored (ps1_get_port_pad_status zeroes `out`). */
+#define PS1_PAD_PORTS 2
+
+void    ps1_set_pad_connected(Ps1*, int32_t port, uint8_t connected);
+void    ps1_set_port_buttons(Ps1*, int32_t port, uint16_t mask);
+void    ps1_set_port_analog(Ps1*, int32_t port, uint8_t lx, uint8_t ly, uint8_t rx, uint8_t ry);
+void    ps1_press_port_analog_button(Ps1*, int32_t port);
+void    ps1_get_port_pad_status(Ps1*, int32_t port, Ps1PadStatus* out);
+
 /* PGXP geometry correction: keep the sub-pixel screen position the GTE
  * computes instead of snapping every vertex to a whole pixel.
  * 0 = off (the default), non-zero = on. Safe to call at any time. */

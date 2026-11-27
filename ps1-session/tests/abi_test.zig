@@ -21,6 +21,11 @@ extern fn ps1_session_request_load(s: *Session, state: [*]const u8, len: usize, 
 extern fn ps1_session_request_flush_cards(s: *Session, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_request_reinstall_cards(s: *Session, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_pad_status(s: *Session, out: *capi.Ps1PadStatus) callconv(.c) void;
+extern fn ps1_session_set_port_connected(s: *Session, port: i32, connected: u8) callconv(.c) void;
+extern fn ps1_session_set_port_buttons(s: *Session, port: i32, mask: u16) callconv(.c) void;
+extern fn ps1_session_set_port_sticks(s: *Session, port: i32, lx: u8, ly: u8, rx: u8, ry: u8) callconv(.c) void;
+extern fn ps1_session_press_port_analog(s: *Session, port: i32) callconv(.c) void;
+extern fn ps1_session_port_pad_status(s: *Session, port: i32, out: *capi.Ps1PadStatus) callconv(.c) void;
 extern fn ps1_session_set_settings(s: *Session, p: *const abi.Ps1SessionSettings) callconv(.c) i32;
 extern fn ps1_session_request_swap(s: *Session, disc: *const abi.Ps1DiscBytes, readbacks: u8, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 
@@ -474,4 +479,35 @@ test "SessionAbi: theDeinterlacingReachesTheRendererAndTheMachineItsSwitch" {
     try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
     try expectEqual(.progressive, s.settings.deinterlace);
     try expect(!s.loop.controls.interlaced_rendering.load(.acquire));
+}
+
+test "SessionAbi: port2ControlsStoreIntoControlsAndOutOfRangeIsIgnored" {
+    const s = try make();
+    defer ps1_session_free(s);
+    const c = &s.loop.controls;
+
+    try expect(c.pad_connected[0].load(.acquire));
+    try expect(!c.pad_connected[1].load(.acquire));
+
+    ps1_session_set_port_connected(s, 1, 1);
+    ps1_session_set_port_buttons(s, 1, 0xFFEF);
+    ps1_session_set_port_sticks(s, 1, 0x10, 0x20, 0x30, 0x40);
+    ps1_session_press_port_analog(s, 1);
+
+    try expect(c.pad_connected[1].load(.acquire));
+    try expectEqual(@as(u32, 0xFFEF), c.buttons[1].load(.acquire));
+    try expectEqual(@as(u32, 0x40_30_20_10), c.sticks[1].load(.acquire));
+    try expect(c.takePortAnalogPress(1));
+    // Port 1 untouched.
+    try expectEqual(@as(u32, 0xFFFF), c.buttons[0].load(.acquire));
+    try expect(!c.takePortAnalogPress(0));
+
+    // Out-of-range port does not crash and zeroes out status.
+    ps1_session_set_port_connected(s, 2, 1);
+    ps1_session_set_port_buttons(s, -1, 0);
+    ps1_session_set_port_sticks(s, 9, 0, 0, 0, 0);
+    ps1_session_press_port_analog(s, 2);
+    var status = capi.Ps1PadStatus{ .analog = 1, .small = 1, .large = 1 };
+    ps1_session_port_pad_status(s, 2, &status);
+    try expectEqual(capi.Ps1PadStatus{ .analog = 0, .small = 0, .large = 0 }, status);
 }

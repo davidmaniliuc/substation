@@ -368,6 +368,7 @@ const HostSettings = struct {
     widescreen: ps1.widescreen.Widescreen,
     cd_speedup: ps1.cdrom.speedup.Speedup,
     interlaced_rendering: bool,
+    pad_connected: [Sio.pad_ports]bool,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -389,6 +390,7 @@ const HostSettings = struct {
             .widescreen = bus.widescreen,
             .cd_speedup = bus.cdrom.speedup,
             .interlaced_rendering = bus.gpu.interlaced_rendering,
+            .pad_connected = bus.sio.pad_connected,
         };
     }
 
@@ -407,6 +409,11 @@ const HostSettings = struct {
         bus.widescreen = s.widescreen;
         bus.cdrom.speedup = s.cd_speedup;
         bus.gpu.interlaced_rendering = s.interlaced_rendering;
+        for (0..Sio.pad_ports) |i| {
+            const port: u1 = @intCast(i);
+            bus.sio.setPadConnected(port, s.pad_connected[i]);
+            if (!s.pad_connected[i]) bus.sio.pads[port] = .{};
+        }
         // Last, because it is what mirrors the rest onto the GPU.
         bus.setPgxp(s.on);
     }
@@ -1146,22 +1153,27 @@ pub export fn ps1_rewind_info(h: *Handle, out: *Ps1RewindInfo) void {
     out.* = .{ .entries = i.entries, .frames_covered = i.frames_covered, .bytes_used = i.bytes_used };
 }
 
+fn padPort(port: i32) ?u1 {
+    if (port < 0 or port >= Sio.pad_ports) return null;
+    return @intCast(port);
+}
+
 /// Takes `sio.zig`'s own convention: 0 means PRESSED, 1 means released,
 /// 0xFFFF is idle. The ABI deliberately does not re-invent a button enum.
 pub export fn ps1_set_buttons(h: *Handle, mask: u16) void {
-    h.cpu.bus.sio.setButtons(mask);
+    h.cpu.bus.sio.setPortButtons(0, mask);
 }
 
 /// The sticks, as the pad reports them: 0x80 centre, Y grows DOWN. Applied
 /// to the next packet the game reads.
 pub export fn ps1_set_analog(h: *Handle, lx: u8, ly: u8, rx: u8, ry: u8) void {
-    h.cpu.bus.sio.pad.setSticks(lx, ly, rx, ry);
+    h.cpu.bus.sio.setPortAnalog(0, lx, ly, rx, ry);
 }
 
 /// The pad's ANALOG button. Queued until the pad is next idle between
 /// packets; the pad ignores it while the game holds the mode lock.
 pub export fn ps1_press_analog_button(h: *Handle) void {
-    h.cpu.bus.sio.pad.pressAnalogButton();
+    h.cpu.bus.sio.pressPortAnalogButton(0);
 }
 
 pub const Ps1PadStatus = extern struct {
@@ -1173,7 +1185,35 @@ pub const Ps1PadStatus = extern struct {
 /// The mode LED and both motors, for the host to show and to rumble with.
 /// A reset rebuilds the pad, so it reads digital and still after one.
 pub export fn ps1_get_pad_status(h: *Handle, out: *Ps1PadStatus) void {
-    const p = &h.cpu.bus.sio.pad;
+    ps1_get_port_pad_status(h, 0, out);
+}
+
+pub export fn ps1_set_pad_connected(h: *Handle, port: i32, connected: u8) void {
+    const p = padPort(port) orelse return;
+    h.cpu.bus.sio.setPadConnected(p, connected != 0);
+}
+
+pub export fn ps1_set_port_buttons(h: *Handle, port: i32, mask: u16) void {
+    const p = padPort(port) orelse return;
+    h.cpu.bus.sio.setPortButtons(p, mask);
+}
+
+pub export fn ps1_set_port_analog(h: *Handle, port: i32, lx: u8, ly: u8, rx: u8, ry: u8) void {
+    const p = padPort(port) orelse return;
+    h.cpu.bus.sio.setPortAnalog(p, lx, ly, rx, ry);
+}
+
+pub export fn ps1_press_port_analog_button(h: *Handle, port: i32) void {
+    const p = padPort(port) orelse return;
+    h.cpu.bus.sio.pressPortAnalogButton(p);
+}
+
+pub export fn ps1_get_port_pad_status(h: *Handle, port: i32, out: *Ps1PadStatus) void {
+    const p_idx = padPort(port) orelse {
+        out.* = .{ .analog = 0, .small = 0, .large = 0 };
+        return;
+    };
+    const p = &h.cpu.bus.sio.pads[p_idx];
     out.* = .{ .analog = @intFromBool(p.analog), .small = p.motor_small, .large = p.motor_large };
 }
 
@@ -1217,6 +1257,8 @@ comptime {
         @compileError("PS1_MEMCARD_BYTES in ps1.h is out of step with sio.zig");
     if (Sio.memcard_slots != 2)
         @compileError("PS1_MEMCARD_SLOTS in ps1.h is out of step with sio.zig");
+    if (Sio.pad_ports != 2)
+        @compileError("PS1_PAD_PORTS in ps1.h is out of step with sio.zig");
 }
 
 /// PGXP geometry correction. Safe at any time: the flag is read per GTE

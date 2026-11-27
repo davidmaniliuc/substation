@@ -71,7 +71,7 @@ pub fn RunLoop(comptime M: type) type {
 
         /// Read by tests and tools; the host is sent `events` instead.
         card_writes: std.atomic.Value(u64) = .init(0),
-        pad_status: std.atomic.Value(u32) = .init(0),
+        pad_status: [2]std.atomic.Value(u32) = .{ .init(0), .init(0) },
         /// What the host is told as it happens. Only this thread calls it
         /// once the session runs; its sink is set before then.
         events: events.Events = .{},
@@ -168,9 +168,12 @@ pub fn RunLoop(comptime M: type) type {
         }
 
         pub fn publishPadStatus(self: *Self) void {
-            const status = self.m.padStatus();
-            self.pad_status.store(status, .release);
-            self.events.pad(status);
+            inline for (0..2) |i| {
+                const port: u1 = @intCast(i);
+                const status = self.m.portPadStatus(port);
+                self.pad_status[i].store(status, .release);
+                self.events.portPad(port, status);
+            }
         }
 
         /// Everything serviced above the paused early-out, in its order: the

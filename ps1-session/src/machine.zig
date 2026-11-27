@@ -136,16 +136,16 @@ pub const Pgxp = struct {
 pub const Engine = enum(u8) { interpreter = 0, cached = 1, jit = 2 };
 
 const contract = [_][]const u8{
-    "runFrame",               "readAudio",         "takeFrameStream", "display",
-    "copyVram",               "copyDepth",         "saveStateSize",   "saveState",
-    "loadState",              "snapshotMark",      "snapshotReturn",  "reset",
-    "swapDisc",               "setButtons",        "setAnalog",       "pressAnalogButton",
-    "padStatus",              "takeMemcard",       "loadMemcard",     "applyPgxp",
-    "setVertexCache",         "setEngine",         "configureRewind", "rewindStep",
-    "rewindFramesCovered",    "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
-    "rasterState",            "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
-    "setVramMode",            "setCpuOverclock",   "setWidescreen",   "setCdSpeedup",
-    "setInterlacedRendering",
+    "runFrame",              "readAudio",              "takeFrameStream",   "display",
+    "copyVram",              "copyDepth",              "saveStateSize",     "saveState",
+    "loadState",             "snapshotMark",           "snapshotReturn",    "reset",
+    "swapDisc",              "setPadConnected",        "setPortButtons",    "setPortAnalog",
+    "pressPortAnalogButton", "portPadStatus",          "takeMemcard",       "loadMemcard",
+    "applyPgxp",             "setVertexCache",         "setEngine",         "configureRewind",
+    "rewindStep",            "rewindFramesCovered",    "setVramHost",       "copyVramAsIs",
+    "copyDepthAsIs",         "rasterState",            "rewindPendingVram", "rewindFillVram",
+    "rewindDropVramFrom",    "setVramMode",            "setCpuOverclock",   "setWidescreen",
+    "setCdSpeedup",          "setInterlacedRendering",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -322,23 +322,43 @@ pub const HandleMachine = struct {
         ));
     }
 
+    pub fn setPadConnected(self: *HandleMachine, port: u1, connected: bool) void {
+        capi.ps1_set_pad_connected(self.h, port, @intFromBool(connected));
+    }
+
     pub fn setButtons(self: *HandleMachine, mask: u16) void {
-        capi.ps1_set_buttons(self.h, mask);
+        self.setPortButtons(0, mask);
+    }
+
+    pub fn setPortButtons(self: *HandleMachine, port: u1, mask: u16) void {
+        capi.ps1_set_port_buttons(self.h, port, mask);
     }
 
     pub fn setAnalog(self: *HandleMachine, s: [4]u8) void {
-        capi.ps1_set_analog(self.h, s[0], s[1], s[2], s[3]);
+        self.setPortAnalog(0, s);
+    }
+
+    pub fn setPortAnalog(self: *HandleMachine, port: u1, s: [4]u8) void {
+        capi.ps1_set_port_analog(self.h, port, s[0], s[1], s[2], s[3]);
     }
 
     pub fn pressAnalogButton(self: *HandleMachine) void {
-        capi.ps1_press_analog_button(self.h);
+        self.pressPortAnalogButton(0);
+    }
+
+    pub fn pressPortAnalogButton(self: *HandleMachine, port: u1) void {
+        capi.ps1_press_port_analog_button(self.h, port);
     }
 
     /// Packed as the frontend reads it: analog in bit 0, the small motor in
     /// bits 8-15, the large in bits 16-23.
     pub fn padStatus(self: *HandleMachine) u32 {
+        return self.portPadStatus(0);
+    }
+
+    pub fn portPadStatus(self: *HandleMachine, port: u1) u32 {
         var p: capi.Ps1PadStatus = undefined;
-        capi.ps1_get_pad_status(self.h, &p);
+        capi.ps1_get_port_pad_status(self.h, port, &p);
         return @as(u32, p.analog & 1) | @as(u32, p.small) << 8 | @as(u32, p.large) << 16;
     }
 

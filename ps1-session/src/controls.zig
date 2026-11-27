@@ -43,18 +43,22 @@ fn mask(b: Bit) u32 {
 /// The centred sticks, one byte per axis as the pad reports them.
 pub const sticks_centred: u32 = 0x8080_8080;
 
+pub const pad_ports = 2;
+
 pub const Controls = struct {
     /// A whole multiple of real time, 1 to `pacing.max_speed`.
     speed: Atomic(u32) = .init(1),
     paused: Atomic(bool) = .init(false),
-    /// Active low: 0xFFFF is no button held.
-    buttons: Atomic(u32) = .init(0xFFFF),
-    /// lx | ly << 8 | rx << 16 | ry << 24.
-    sticks: Atomic(u32) = .init(sticks_centred),
-    /// Presses waiting for the emulator thread. A count rather than a flag
-    /// only so a press is never lost to a race; the pad itself collapses
-    /// several presses before one idle into one toggle.
-    analog_presses: Atomic(u32) = .init(0),
+    /// Port 1 defaults connected, Port 2 disconnected.
+    pad_connected: [pad_ports]Atomic(bool) = .{ .init(true), .init(false) },
+    /// Active low: 0xFFFF is no button held, per port.
+    buttons: [pad_ports]Atomic(u32) = .{ .init(0xFFFF), .init(0xFFFF) },
+    /// lx | ly << 8 | rx << 16 | ry << 24, per port.
+    sticks: [pad_ports]Atomic(u32) = .{ .init(sticks_centred), .init(sticks_centred) },
+    /// Presses waiting for the emulator thread, per port. A count rather than
+    /// a flag only so a press is never lost to a race; the pad itself
+    /// collapses several presses before one idle into one toggle.
+    analog_presses: [pad_ports]Atomic(u32) = .{ .init(0), .init(0) },
     pgxp_flags: Atomic(u32) = .init(0),
     /// The tolerance's `f32` bit pattern; negative is the core's "none".
     pgxp_tolerance: Atomic(u32) = .init(@bitCast(@as(f32, -1))),
@@ -89,11 +93,19 @@ pub const Controls = struct {
     gpu_vram: bool = false,
 
     pub fn pressAnalogButton(self: *Controls) void {
-        _ = self.analog_presses.fetchAdd(1, .acq_rel);
+        self.pressPortAnalogButton(0);
     }
 
     pub fn takeAnalogPress(self: *Controls) bool {
-        return self.analog_presses.swap(0, .acq_rel) > 0;
+        return self.takePortAnalogPress(0);
+    }
+
+    pub fn pressPortAnalogButton(self: *Controls, port: u1) void {
+        _ = self.analog_presses[port].fetchAdd(1, .acq_rel);
+    }
+
+    pub fn takePortAnalogPress(self: *Controls, port: u1) bool {
+        return self.analog_presses[port].swap(0, .acq_rel) > 0;
     }
 
     pub fn setPgxp(self: *Controls, p: machine.Pgxp) void {

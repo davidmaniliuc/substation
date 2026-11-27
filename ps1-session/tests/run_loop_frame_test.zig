@@ -558,6 +558,29 @@ test "FramePath: aPadChangeAfterAFrameSendsOneEvent" {
     try expectEqual(1, rec.last(.pad).?.pad.analog);
 }
 
+test "FramePath: port2ControlsReachTheMachineAndEmitPad2Events" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    r.loop.controls.pad_connected[1].store(true, .release);
+    r.loop.controls.buttons[1].store(0xFFFE, .release);
+    r.loop.controls.sticks[1].store(0x40_30_20_10, .release);
+    r.loop.controls.pressPortAnalogButton(1);
+    r.m.pad2 = 1 | 255 << 8 | 0x80 << 16;
+    _ = r.iterate();
+    try expect(r.m.pad_connected[1]);
+    try expectEqual(@as(u16, 0xFFFE), r.m.buttons[1]);
+    try expectEqual([4]u8{ 0x10, 0x20, 0x30, 0x40 }, r.m.sticks[1]);
+    try expectEqual(1, r.m.count("pressPort2AnalogButton"));
+    try expectEqual(1, rec.count(.pad2));
+    try expectEqual(session.capi.Ps1PadStatus{ .analog = 1, .small = 255, .large = 0x80 }, rec.last(.pad2).?.pad);
+    // Unchanged Port 2 status sends no repeat event.
+    _ = r.iterate();
+    try expectEqual(1, rec.count(.pad2));
+}
+
 test "FramePath: framesSendTheRateTwiceASecond" {
     var r: Rig = undefined;
     try r.init();

@@ -339,18 +339,35 @@ pub const Session = struct {
 
     /// Active low, as the pad reports it.
     pub fn setButtons(self: *Session, mask: u16) void {
-        self.loop.controls.buttons.store(mask, .release);
-        self.bump();
+        self.setPortButtons(0, mask);
     }
 
     pub fn setSticks(self: *Session, lx: u8, ly: u8, rx: u8, ry: u8) void {
-        const packed_sticks = @as(u32, lx) | @as(u32, ly) << 8 | @as(u32, rx) << 16 | @as(u32, ry) << 24;
-        self.loop.controls.sticks.store(packed_sticks, .release);
-        self.bump();
+        self.setPortSticks(0, lx, ly, rx, ry);
     }
 
     pub fn pressAnalogButton(self: *Session) void {
-        self.loop.controls.pressAnalogButton();
+        self.pressPortAnalogButton(0);
+    }
+
+    pub fn setPortConnected(self: *Session, port: u1, connected: bool) void {
+        self.loop.controls.pad_connected[port].store(connected, .release);
+        self.bump();
+    }
+
+    pub fn setPortButtons(self: *Session, port: u1, mask: u16) void {
+        self.loop.controls.buttons[port].store(mask, .release);
+        self.bump();
+    }
+
+    pub fn setPortSticks(self: *Session, port: u1, lx: u8, ly: u8, rx: u8, ry: u8) void {
+        const packed_sticks = @as(u32, lx) | @as(u32, ly) << 8 | @as(u32, rx) << 16 | @as(u32, ry) << 24;
+        self.loop.controls.sticks[port].store(packed_sticks, .release);
+        self.bump();
+    }
+
+    pub fn pressPortAnalogButton(self: *Session, port: u1) void {
+        self.loop.controls.pressPortAnalogButton(port);
         self.bump();
     }
 
@@ -511,12 +528,20 @@ pub const Session = struct {
 
     /// Analog in bit 0, the small motor in bits 8-15, the large in 16-23.
     pub fn padStatus(self: *const Session) u32 {
-        return self.loop.pad_status.load(.acquire);
+        return self.portPadStatus(0);
+    }
+
+    pub fn portPadStatus(self: *const Session, port: u1) u32 {
+        return self.loop.pad_status[port].load(.acquire);
     }
 
     /// The pad's two motor bytes: small, then large.
     pub fn motor(self: *const Session) [2]u8 {
-        const p = self.padStatus();
+        return self.portMotor(0);
+    }
+
+    pub fn portMotor(self: *const Session, port: u1) [2]u8 {
+        const p = self.portPadStatus(port);
         return .{ @truncate(p >> 8), @truncate(p >> 16) };
     }
 

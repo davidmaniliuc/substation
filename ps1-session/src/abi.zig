@@ -228,16 +228,41 @@ pub export fn ps1_session_set_settings(s: *Session, p: *const Ps1SessionSettings
     return capi.PS1_OK;
 }
 
+fn padPort(port: i32) ?u1 {
+    if (port < 0 or port >= 2) return null;
+    return @intCast(port);
+}
+
 pub export fn ps1_session_set_buttons(s: *Session, mask: u16) void {
-    s.setButtons(mask);
+    s.setPortButtons(0, mask);
 }
 
 pub export fn ps1_session_set_sticks(s: *Session, lx: u8, ly: u8, rx: u8, ry: u8) void {
-    s.setSticks(lx, ly, rx, ry);
+    s.setPortSticks(0, lx, ly, rx, ry);
 }
 
 pub export fn ps1_session_press_analog(s: *Session) void {
-    s.pressAnalogButton();
+    s.pressPortAnalogButton(0);
+}
+
+pub export fn ps1_session_set_port_connected(s: *Session, port: i32, connected: u8) void {
+    const p = padPort(port) orelse return;
+    s.setPortConnected(p, connected != 0);
+}
+
+pub export fn ps1_session_set_port_buttons(s: *Session, port: i32, mask: u16) void {
+    const p = padPort(port) orelse return;
+    s.setPortButtons(p, mask);
+}
+
+pub export fn ps1_session_set_port_sticks(s: *Session, port: i32, lx: u8, ly: u8, rx: u8, ry: u8) void {
+    const p = padPort(port) orelse return;
+    s.setPortSticks(p, lx, ly, rx, ry);
+}
+
+pub export fn ps1_session_press_port_analog(s: *Session, port: i32) void {
+    const p = padPort(port) orelse return;
+    s.pressPortAnalogButton(p);
 }
 
 pub export fn ps1_session_set_speed(s: *Session, speed: i32) void {
@@ -304,8 +329,16 @@ pub export fn ps1_session_frames_produced(s: *Session) u64 {
 }
 
 pub export fn ps1_session_pad_status(s: *Session, out: *capi.Ps1PadStatus) void {
-    const m = s.motor();
-    out.* = .{ .analog = @intCast(s.padStatus() & 1), .small = m[0], .large = m[1] };
+    ps1_session_port_pad_status(s, 0, out);
+}
+
+pub export fn ps1_session_port_pad_status(s: *Session, port: i32, out: *capi.Ps1PadStatus) void {
+    const p = padPort(port) orelse {
+        out.* = .{ .analog = 0, .small = 0, .large = 0 };
+        return;
+    };
+    const m = s.portMotor(p);
+    out.* = .{ .analog = @intCast(s.portPadStatus(p) & 1), .small = m[0], .large = m[1] };
 }
 
 pub export fn ps1_session_card_writes(s: *Session) u64 {

@@ -102,10 +102,14 @@ fn pass(self: anytype, now_ns: u64) Outcome {
 
     self.serviceSwap();
 
-    self.m.setButtons(@truncate(c.buttons.load(.acquire)));
-    const s = c.sticks.load(.acquire);
-    self.m.setAnalog(.{ @truncate(s), @truncate(s >> 8), @truncate(s >> 16), @truncate(s >> 24) });
-    if (c.takeAnalogPress()) self.m.pressAnalogButton();
+    inline for (0..2) |i| {
+        const port: u1 = @intCast(i);
+        self.m.setPadConnected(port, c.pad_connected[i].load(.acquire));
+        self.m.setPortButtons(port, @truncate(c.buttons[i].load(.acquire)));
+        const s = c.sticks[i].load(.acquire);
+        self.m.setPortAnalog(port, .{ @truncate(s), @truncate(s >> 8), @truncate(s >> 16), @truncate(s >> 24) });
+        if (c.takePortAnalogPress(port)) self.m.pressPortAnalogButton(port);
+    }
     // Re-applied every frame rather than on change, as the button mask is:
     // this thread owns the machine, and a latch would need a second flag to
     // say the value moved.
