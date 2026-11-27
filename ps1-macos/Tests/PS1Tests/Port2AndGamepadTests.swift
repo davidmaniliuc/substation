@@ -51,9 +51,10 @@ import Testing
         #expect(!model.port2Connected)
         #expect(session.calls.contains("setPortConnected(1, false)"))
 
-        // Re-enabling Automatic with Keyboard Only on Port 1 and 1 controller connects Port 2.
-        model.port2ControllerChoice = .automatic
+        // With 1 controller left, re-enabling Automatic keeps Port 2 disconnected
+        // until Port 1 is set to Keyboard Only.
         model.simulateConnectedControllersForTesting(controllers(1))
+        model.port2ControllerChoice = .automatic
         #expect(!model.port2Connected)
         model.port1ControllerChoice = .keyboardOnly
         #expect(model.port2Connected)
@@ -213,7 +214,7 @@ import Testing
         #expect(!single.isShown(.analog2))
         single.point(at: .analog)
         _ = single.handle(.down)
-        #expect(single.focus == .reset)
+        #expect(single.focus == .gameSettings)
 
         var dual = PauseMenuNavigation()
         dual.open(discCount: 1, insertedDisc: 0, pgxpLocked: false, port2Connected: true)
@@ -223,6 +224,8 @@ import Testing
         #expect(dual.focus == .analog2)
         #expect(dual.handle(.right) == .adjust(.analog2, 1))
         #expect(dual.handle(.confirm) == .toggle(.analog2))
+        _ = dual.handle(.down)
+        #expect(dual.focus == .gameSettings)
 
         // OpenGame queues pressPortAnalog(1) when Port 2 Analog is toggled in the pause menu.
         let (defaults, name) = try makeDefaults()

@@ -63,7 +63,7 @@ struct GameScreen: View {
                 }
 
                 if game.showsPaused && !menuOpen && !game.isOpen(.saveStates)
-                    && !model.isDialogShown {
+                    && game.gameSettingsTarget == nil && !model.isDialogShown {
                     PausedIndicator(model: model, game: game)
                         .motionTransition(.scale(scale: 1.25).combined(with: .opacity))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,6 +104,11 @@ struct GameScreen: View {
             if settled { settledFullScreen = fullScreen }
         })
         .onAppear { game.showHUDThenHide() }
+        .sheet(item: $game.gameSettingsTarget, onDismiss: { game.closeGameSettings() }) { target in
+            GameSettingsView(model: model, target: target) {
+                game.closeGameSettings()
+            }
+        }
     }
 }
 
@@ -149,7 +154,7 @@ public struct GameWindowView: View {
             // Locked to the picture's shape with the traffic lights fading
             // with the HUD, as the library's window is while it shows a game.
             .background(WindowConfigurator(lockAspect: true, chromeVisible: game?.hudVisible ?? true,
-                                           aspect: model.widescreen.aspect))
+                                           aspect: game?.widescreenAspect ?? model.widescreen.aspect))
             // The toolbar's band and the white title strip are a game's dark
             // chrome under a Light system too.
             .preferredColorScheme(.dark)

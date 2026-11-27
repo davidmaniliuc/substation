@@ -101,6 +101,10 @@ public final class EmulatorViewModel {
     /// Last played and active play time per game. Outlives every disc, like
     /// `covers`.
     let playStats = PlayStatsStore()
+    /// Per-game setting overrides, keyed by the game's first-disc key.
+    let gameOverrides: GameOverridesStore
+    /// The per-game settings sheet open over the library window, if any.
+    var libraryGameSettingsTarget: GameSettingsTarget?
     /// Bumped after every state write so the menus re-read their timestamps.
     private(set) var stateRevision = 0
     func stateWritten() { stateRevision += 1 }
@@ -209,7 +213,8 @@ public final class EmulatorViewModel {
          vramReadbacks: VramReadbacksSetting = VramReadbacksSetting(),
          gameWindow: GameWindowSetting = GameWindowSetting(),
          gamepadBindings: GamepadBindings = GamepadBindings(),
-         controllerAssignment: ControllerAssignment = ControllerAssignment()) {
+         controllerAssignment: ControllerAssignment = ControllerAssignment(),
+         gameOverrides: GameOverridesStore = GameOverridesStore()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
         self.rewindSetting = rewind
@@ -217,6 +222,7 @@ public final class EmulatorViewModel {
         self.gameWindowSetting = gameWindow
         self.gamepadBindings = gamepadBindings
         self.controllerAssignment = controllerAssignment
+        self.gameOverrides = gameOverrides
         self.bios = bios
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         if stage == .onboarding { surveyBios() }
@@ -612,8 +618,33 @@ public final class EmulatorViewModel {
     /// running, or for a game the table does not list.
     var discPgxpPreset: PgxpPreset? { game?.discPgxpPreset }
 
-    /// The preset in force: nil while Per-Game Fixes is off.
-    var pgxpPreset: PgxpPreset? { pgxpSetting.usePresets ? discPgxpPreset : nil }
+    /// The preset in force for `game`: nil while its resolved Automatic Game Fixes is off.
+    func pgxpPreset(for game: OpenGame) -> PgxpPreset? {
+        resolvedSettings(for: game).pgxpUsePresets ? game.discPgxpPreset : nil
+    }
+
+    /// Whether `game`'s active preset decides `field`.
+    func pgxpPresetDecides<T>(_ field: KeyPath<PgxpPreset, T?>, for game: OpenGame) -> Bool {
+        pgxpPreset(for: game)?[keyPath: field] != nil
+    }
+
+    /// PGXP as the core runs it for `game`, overrides and preset included.
+    func pgxpEffectivelyEnabled(for game: OpenGame) -> Bool {
+        let resolved = resolvedSettings(for: game)
+        return pgxpPreset(for: game)?.enabled ?? resolved.pgxpEnabled
+    }
+
+    /// The depth buffer as the core runs it for `game`.
+    func pgxpEffectiveDepthBuffer(for game: OpenGame) -> Bool {
+        let resolved = resolvedSettings(for: game)
+        return (pgxpPreset(for: game)?.depthBuffer ?? resolved.pgxpDepthBuffer)
+            && pgxpEffectivelyEnabled(for: game)
+    }
+
+    /// The preset in force for the running game: nil while Automatic Game Fixes is off.
+    var pgxpPreset: PgxpPreset? {
+        game.flatMap { pgxpPreset(for: $0) }
+    }
 
     /// Whether the running game's preset decides `field`. Its control is
     /// disabled then, since a change to it would do nothing.
@@ -621,26 +652,17 @@ public final class EmulatorViewModel {
         pgxpPreset?[keyPath: field] != nil
     }
 
-    /// PGXP as the core runs it, preset included.
-    var pgxpEffectivelyEnabled: Bool { pgxpPreset?.enabled ?? pgxpSetting.enabled }
+    /// PGXP as the core runs it, overrides and preset included.
+    var pgxpEffectivelyEnabled: Bool {
+        if let game { return pgxpEffectivelyEnabled(for: game) }
+        return pgxpSetting.enabled
+    }
 
     /// The depth buffer as the core runs it, which is what the session's
     /// renderer is built for.
     var pgxpEffectiveDepthBuffer: Bool {
-        (pgxpPreset?.depthBuffer ?? pgxpSetting.depthBuffer) && pgxpEffectivelyEnabled
-    }
-
-    /// The player's PGXP values. The session folds the disc's preset over
-    /// them itself.
-    private var playerPgxp: PgxpSettings {
-        let s = pgxpSetting
-        return PgxpSettings(enabled: s.enabled, cpu: s.cpu, culling: s.culling,
-                            vertexCache: s.vertexCache,
-                            textureCorrection: s.textureCorrection,
-                            colorCorrection: s.colorCorrection, depthBuffer: s.depthBuffer,
-                            transparentDepth: s.transparentDepth, disable2d: s.disable2d,
-                            preserveProjection: s.preserveProjection,
-                            tolerance: s.tolerance < 0 ? nil : s.tolerance)
+        if let game { return pgxpEffectiveDepthBuffer(for: game) }
+        return pgxpSetting.depthBuffer && pgxpSetting.enabled
     }
 
     /// Whether Restore Defaults has anything to do.
@@ -670,12 +692,28 @@ public final class EmulatorViewModel {
         vramReadbacksSetting.choice(serial: serial)
     }
 
+    /// The readbacks choice for a game: per-game override first, falling back
+    /// to the legacy per-serial `VramReadbacksSetting`.
+    func readbacksChoice(key: String?, serial: String?) -> VramReadbacks {
+        if let key, let explicit = gameOverrides.overrides(for: key)?.vramReadbacks,
+           explicit != .automatic {
+            return explicit
+        }
+        return vramReadbacksSetting.choice(serial: serial)
+    }
+
     /// Video ▸ Accurate VRAM Readbacks, for the running disc.
     var vramReadbacks: VramReadbacks {
-        get { vramReadbacksSetting.choice(serial: discSerial) }
+        get { readbacksChoice(key: game?.overrideKey, serial: discSerial) }
         set {
             guard let discSerial else { return }
             vramReadbacksSetting.set(newValue, serial: discSerial)
+            if let key = game?.overrideKey,
+               gameOverrides.overrides(for: key)?.vramReadbacks != nil {
+                gameOverrides.update(for: key) {
+                    $0.vramReadbacks = newValue == .automatic ? nil : newValue
+                }
+            }
             pushSettings()
         }
     }
@@ -686,26 +724,154 @@ public final class EmulatorViewModel {
     /// A choice's title in the Video menu and the Settings pane: Automatic
     /// names what it resolved to for the running game.
     func vramReadbacksTitle(_ choice: VramReadbacks) -> String {
-        guard choice == .automatic, vramReadbacksAvailable else { return choice.title }
-        return "\(choice.title) (\(Ps1Core.gameNeedsDualVram(serial: discSerial) ? "On" : "Off"))"
+        guard vramReadbacksAvailable else { return choice.title }
+        return vramReadbacksTitle(choice, serial: discSerial)
     }
 
-    /// Every setting as one session takes them: the player's values and the
-    /// running disc's readbacks choice. The session folds both tables.
-    private var sessionSettings: SessionSettings {
-        SessionSettings(gain: volumeSetting.gain, cpuEngine: cpuEngine,
-                        runaheadFrames: runaheadSetting.frames,
-                        rewindBudget: rewindSetting.budgetBytes, scale: internalScale,
-                        dither: ditherMode, textureFilter: textureFilter,
-                        spriteFilter: spriteFilter, pgxp: playerPgxp,
-                        pgxpUsePresets: pgxpUsePresets,
-                        vramReadbacks: vramReadbacks,
-                        cpuOverclock: cpuOverclockSetting.effective,
-                        displayEffect: displayEffect,
-                        widescreen: widescreen,
-                        cdReadSpeedup: cdSpeedupSetting.read,
-                        cdSeekSpeedup: cdSpeedupSetting.seek,
-                        deinterlacing: deinterlacing)
+    /// A choice's title for a specific disc serial: Automatic names what the
+    /// core's table resolves to for that serial.
+    func vramReadbacksTitle(_ choice: VramReadbacks, serial: String?) -> String {
+        guard choice == .automatic, let serial, !serial.isEmpty else { return choice.title }
+        return "\(choice.title) (\(Ps1Core.gameNeedsDualVram(serial: serial) ? "On" : "Off"))"
+    }
+
+    // MARK: Per-game settings overrides
+
+    /// Snapshot of all global settings eligible for per-game overrides.
+    var globalGameSettings: GlobalGameSettings {
+        GlobalGameSettings(
+            internalScale: internalScale,
+            ditherMode: ditherMode,
+            textureFilter: textureFilter,
+            spriteFilter: spriteFilter,
+            widescreen: widescreen,
+            deinterlacing: deinterlacing,
+            displayEffect: displayEffect,
+            pgxpEnabled: pgxpSetting.enabled,
+            pgxpUsePresets: pgxpSetting.usePresets,
+            pgxpTextureCorrection: pgxpSetting.textureCorrection,
+            pgxpColorCorrection: pgxpSetting.colorCorrection,
+            pgxpCulling: pgxpSetting.culling,
+            pgxpDisable2d: pgxpSetting.disable2d,
+            pgxpDepthBuffer: pgxpSetting.depthBuffer,
+            pgxpTransparentDepth: pgxpSetting.transparentDepth,
+            pgxpCpuMode: pgxpSetting.cpu,
+            pgxpPreserveProjection: pgxpSetting.preserveProjection,
+            pgxpVertexCache: pgxpSetting.vertexCache,
+            pgxpTolerance: PgxpTolerance(floatValue: pgxpSetting.tolerance),
+            cpuEngine: cpuEngine,
+            cpuOverclockEnabled: cpuOverclockSetting.enabled,
+            cpuOverclockPercent: cpuOverclockSetting.percent,
+            cdReadSpeedup: cdSpeedupSetting.read,
+            cdSeekSpeedup: cdSpeedupSetting.seek,
+            runaheadFrames: runaheadSetting.frames,
+            fastBoot: fastBootSetting.enabled
+        )
+    }
+
+    /// Resolves global settings merged with a game's overrides and legacy VRAM readbacks.
+    func resolvedSettings(forKey key: String?, serial: String?) -> ResolvedGameSettings {
+        GameOverrides.resolve(
+            global: globalGameSettings,
+            override: key.flatMap { gameOverrides.overrides(for: $0) },
+            legacyVramReadbacks: vramReadbacksSetting.choice(serial: serial)
+        )
+    }
+
+    /// Resolves effective settings for an open game.
+    func resolvedSettings(for game: OpenGame) -> ResolvedGameSettings {
+        resolvedSettings(forKey: game.overrideKey, serial: game.discSerial)
+    }
+
+    /// Canonical override key for a library entry: always its merged game's
+    /// first disc key, even when Merge Multi-Disc Games is off.
+    func overrideKey(for entry: GameEntry) -> String {
+        let keys = LibraryCollection.statsKeys(library.entries)
+        return keys[entry.id] ?? SaveStateStore.key(for: entry)
+    }
+
+    /// Builds a `GameSettingsTarget` for a library entry, sharing one profile
+    /// across all discs of a multi-disc game.
+    func gameSettingsTarget(for entry: GameEntry) -> GameSettingsTarget {
+        let merged = DiscGrouping.group(library.entries, merging: true)
+        let group = merged.first { g in g.discs.contains { $0.id == entry.id } }
+        let first = group?.first ?? entry
+        let key = SaveStateStore.key(for: first)
+        let title = group?.title ?? entry.title
+        let discs = group?.discs ?? [entry]
+        let serials = Array(Set(discs.compactMap(\.serial))).sorted()
+        return GameSettingsTarget(
+            key: key,
+            title: title,
+            serial: first.serial ?? entry.serial,
+            serials: serials,
+            discCount: group?.discCount ?? entry.discCount,
+            region: first.identity.region ?? entry.identity.region,
+            coverURL: coverURL(for: first)
+        )
+    }
+
+    func openGameSettings(for entry: GameEntry) {
+        guard !isDialogShown else { return }
+        libraryGameSettingsTarget = gameSettingsTarget(for: entry)
+    }
+
+    func closeLibraryGameSettings() {
+        libraryGameSettingsTarget = nil
+    }
+
+    /// Unified VRAM readbacks choice for a game settings target, checking
+    /// per-game overrides first and falling back to legacy per-serial entries.
+    func vramReadbacksChoice(for target: GameSettingsTarget) -> VramReadbacks {
+        if let explicit = gameOverrides.overrides(for: target.key)?.vramReadbacks,
+           explicit != .automatic {
+            return explicit
+        }
+        if let serial = target.serial {
+            let legacy = vramReadbacksSetting.choice(serial: serial)
+            if legacy != .automatic { return legacy }
+        }
+        for serial in target.serials {
+            let legacy = vramReadbacksSetting.choice(serial: serial)
+            if legacy != .automatic { return legacy }
+        }
+        return .automatic
+    }
+
+    /// Count of active overrides for `target`, including any legacy VRAM
+    /// readbacks override not yet mirrored into `GameOverrides`.
+    func activeOverrideCount(for target: GameSettingsTarget) -> Int {
+        let stored = gameOverrides.overrides(for: target.key) ?? GameOverrides()
+        let extraVram = (stored.vramReadbacks == nil && vramReadbacksChoice(for: target) != .automatic) ? 1 : 0
+        return stored.overrideCount + extraVram
+    }
+
+    /// Updates a game's overrides and pushes new settings live to matching open games.
+    func updateGameOverrides(forKey key: String, _ mutate: (inout GameOverrides) -> Void) {
+        gameOverrides.update(for: key, mutate)
+        pushSettings(forKey: key)
+    }
+
+    /// Updates a game's VRAM readbacks override, keeping legacy per-serial
+    /// UserDefaults in sync, and pushes live to matching open games.
+    func setGameVramReadbacks(_ value: VramReadbacks, for target: GameSettingsTarget) {
+        gameOverrides.update(for: target.key) {
+            $0.vramReadbacks = value == .automatic ? nil : value
+        }
+        for serial in target.serials {
+            vramReadbacksSetting.set(value, serial: serial)
+        }
+        pushSettings(forKey: target.key, serials: target.serials)
+    }
+
+    /// Clears every override (including legacy VRAM readbacks) for `target`
+    /// and pushes the restored global settings live to matching open games.
+    func resetGameOverrides(for target: GameSettingsTarget) {
+        gameOverrides.remove(for: target.key)
+        for serial in target.serials {
+            vramReadbacksSetting.set(.automatic, serial: serial)
+        }
+        pushSettings(forKey: target.key, serials: target.serials)
     }
 
     /// The one hand-over of every setting to the session.
@@ -714,12 +880,21 @@ public final class EmulatorViewModel {
         for game in games { game.session?.setSettings(sessionSettings(for: game)) }
     }
 
-    /// The settings `game` runs under: the player's, and its own disc's
-    /// readbacks choice.
-    private func sessionSettings(for game: OpenGame) -> SessionSettings {
-        var settings = sessionSettings
-        settings.vramReadbacks = readbacksChoice(serial: game.discSerial)
-        return settings
+    /// Pushes updated settings only to open games matching `key` (or `serials`).
+    func pushSettings(forKey key: String, serials: [String] = []) {
+        let serialSet = Set(serials)
+        for game in games where game.overrideKey == key || game.discSerial.map(serialSet.contains) == true {
+            game.session?.setSettings(sessionSettings(for: game))
+        }
+    }
+
+    /// The settings `game` runs under: global settings merged with its own
+    /// per-game overrides and VRAM readbacks choice.
+    func sessionSettings(for game: OpenGame) -> SessionSettings {
+        resolvedSettings(for: game).sessionSettings(
+            gain: volumeSetting.gain,
+            rewindBudget: rewindSetting.budgetBytes
+        )
     }
 
     /// Clock Speed Control: persisted, pushed to the session, carried by a new
@@ -745,10 +920,11 @@ public final class EmulatorViewModel {
     /// What the player's setting sends: 100 while it is off.
     var cpuOverclockEffective: Int { cpuOverclockSetting.effective }
 
-    /// The clock `game` runs at, as the session folds it: the player's while
-    /// the setting is on, else the per-game table's, else the real clock.
+    /// The clock `game` runs at, as the session folds it: its resolved
+    /// overclock setting while enabled, else the per-game table's, else the real clock.
     func cpuOverclock(for game: OpenGame) -> Int {
-        if cpuOverclockSetting.enabled { return cpuOverclockSetting.percent }
+        let resolved = resolvedSettings(for: game)
+        if resolved.cpuOverclockEnabled { return resolved.cpuOverclockPercent }
         return Ps1Core.cpuOverclock(serial: game.discSerial) ?? CpuOverclockSetting.defaultPercent
     }
 
@@ -1606,9 +1782,16 @@ public final class EmulatorViewModel {
 
             let bootedBios = BiosIdentity.identify(biosData)
             let host = SessionHostView()
-            // The running disc's serial is still the outgoing game's here.
-            var settings = sessionSettings
-            settings.vramReadbacks = vramReadbacksSetting.choice(serial: identity.serial)
+            // Resolve the game's canonical first-disc key before building the
+            // session so every per-game override (including fastBoot and CPU
+            // engine) is in force from frame 0.
+            let siblings = Self.siblingDiscs(of: url, entries: library.entries)
+            let inTray = DiscRef(url: url, disc: index)
+            let fallbackEntry = GameEntry(url: url, disc: index, identity: identity)
+            let resumeKey = SaveStateStore.key(for: siblings.first ?? fallbackEntry)
+            let resolved = resolvedSettings(forKey: resumeKey, serial: identity.serial)
+            let settings = resolved.sessionSettings(gain: volumeSetting.gain,
+                                                    rewindBudget: rewindSetting.budgetBytes)
             let config = SessionConfig(
                 bios: biosData,
                 disc: disc,
@@ -1617,7 +1800,7 @@ public final class EmulatorViewModel {
                 // In the config rather than set after: the resume state
                 // restores the I-cache as the saving machine held it, and a
                 // later switch would flush it.
-                settings: settings, fastBoot: fastBoot)
+                settings: settings, fastBoot: resolved.fastBoot)
             let session: any GameSession
             do throws(Ps1Error) {
                 session = try makeSession(config)
@@ -1663,11 +1846,9 @@ public final class EmulatorViewModel {
             try session.start()
             game.startAutoSave()
 
-            game.currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
-            let inTray = DiscRef(url: url, disc: index)
+            game.currentDiscs = siblings
             game.currentDiscIndex = game.currentDiscs.firstIndex { Self.isDisc($0, inTray) }
             game.discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
-            let resumeKey = SaveStateStore.key(for: game.currentDiscs.first ?? Self.discEntry(for: url))
             game.resumeKey = resumeKey
             playStats.markPlayed(resumeKey, at: Date())
             publishGamesToSystem()
@@ -2326,6 +2507,12 @@ public final class EmulatorViewModel {
                 }
                 // The About window takes no game input either.
                 if AboutWindow.owns(windowNumber: windowNumber) {
+                    if !isDown { _ = self.keyUp(code) }
+                    return false
+                }
+                // A Game Settings sheet takes its own keyboard events (arrows,
+                // Return, Escape), never driving a running game or pause menu.
+                if GameSettingsWindow.owns(windowNumber: windowNumber) {
                     if !isDown { _ = self.keyUp(code) }
                     return false
                 }

@@ -26,6 +26,7 @@ public struct ContentView: View {
                     searchText: model.librarySearch,
                     coverURL: { model.coverURL(for: $0) },
                     play: { model.play($0) },
+                    gameSettings: { model.openGameSettings(for: $0) },
                     chooseCover: { model.chooseCover(for: $0) },
                     downloadCover: { model.downloadCover(for: $0) },
                     removeCover: { model.removeCover(for: $0) },
@@ -37,6 +38,13 @@ public struct ContentView: View {
                     selection: $model.librarySelection,
                     gridWidth: $model.libraryGridWidth,
                     gridHeight: $model.libraryGridHeight)
+                .sheet(item: $model.libraryGameSettingsTarget, onDismiss: {
+                    model.closeLibraryGameSettings()
+                }) { target in
+                    GameSettingsView(model: model, target: target) {
+                        model.closeLibraryGameSettings()
+                    }
+                }
             } else {
                 OnboardingView(model: model)
             }
@@ -85,7 +93,7 @@ public struct ContentView: View {
         .background(WindowConfigurator(
             lockAspect: showsGame,
             chromeVisible: !showsGame || (libraryGame?.hudVisible ?? true),
-            aspect: model.widescreen.aspect
+            aspect: libraryGame?.widescreenAspect ?? model.widescreen.aspect
         ))
         // The library's window is see-through: the desktop shows through the
         // system's material and the panel sits inset on it. Everywhere else

@@ -51,6 +51,15 @@ final class OpenGame: Identifiable {
     /// The disc's preset, whatever the switch says. Nil for a game the table
     /// does not list.
     var discPgxpPreset: PgxpPreset?
+    /// The per-game settings sheet open over this game, if any.
+    var gameSettingsTarget: GameSettingsTarget?
+    /// Pause state to restore when the per-game settings sheet closes, when
+    /// opened outside the pause menu (e.g. from Machine ▸ Game Settings…).
+    private var pausedBeforeSettings: Bool?
+
+    /// Canonical key for per-game overrides: first disc's resume key, falling
+    /// back to the disc's serial when a test installs a session without one.
+    var overrideKey: String? { resumeKey ?? discSerial }
 
     /// HUD auto-hide lives here rather than in a `@State` on the view: this
     /// is where the behaviour belongs.
@@ -264,7 +273,89 @@ final class OpenGame: Identifiable {
         guard let display = session?.newestDisplay, display.enabled != 0, display.height > 0 else {
             return nil
         }
-        return Screenshot.size(displayHeight: Int(display.height), scale: app.internalScale, enabled: true)
+        return Screenshot.size(displayHeight: Int(display.height), scale: effectiveInternalScale, enabled: true)
+    }
+
+    // MARK: Per-game settings
+
+    var resolvedSettings: ResolvedGameSettings { app.resolvedSettings(for: self) }
+    var effectiveInternalScale: Int { resolvedSettings.internalScale }
+    var effectivePgxpEnabled: Bool { resolvedSettings.pgxpEnabled }
+    var widescreenAspect: NSSize { resolvedSettings.widescreen.aspect }
+
+    var canOpenGameSettings: Bool {
+        session != nil && overrideKey != nil && !app.isDialogShown
+    }
+
+    var gameSettingsSummary: String? {
+        guard let target = makeGameSettingsTarget() else { return nil }
+        let count = app.activeOverrideCount(for: target)
+        switch count {
+        case 0: return nil
+        case 1: return "1 custom setting"
+        default: return "\(count) custom settings"
+        }
+    }
+
+    func makeGameSettingsTarget() -> GameSettingsTarget? {
+        guard let key = overrideKey else { return nil }
+        let title: String
+        if currentDiscs.count > 1 {
+            title = DiscGrouping.baseTitle(currentDiscs.first?.title ?? discTitle)
+        } else {
+            title = discTitle.isEmpty ? (currentDiscs.first?.title ?? key) : discTitle
+        }
+        let serials = Array(Set(([discSerial] + currentDiscs.map(\.serial)).compactMap { $0 })).sorted()
+        return GameSettingsTarget(
+            key: key,
+            title: title,
+            serial: discSerial ?? currentDiscs.first?.serial,
+            serials: serials,
+            discCount: max(currentDiscs.count, 1),
+            region: currentDisc?.identity.region ?? currentDiscs.first?.identity.region,
+            coverURL: currentCoverURL
+        )
+    }
+
+    func openGameSettings() {
+        guard canOpenGameSettings, let target = makeGameSettingsTarget() else { return }
+        releaseAllKeys()
+        releaseRewind()
+        if !surfaces.pausesGame && pausedBeforeSettings == nil {
+            pausedBeforeSettings = isPaused
+            isPaused = true
+        }
+        gameSettingsTarget = target
+    }
+
+    func closeGameSettings() {
+        guard gameSettingsTarget != nil || pausedBeforeSettings != nil else { return }
+        gameSettingsTarget = nil
+        if let wasPaused = pausedBeforeSettings {
+            pausedBeforeSettings = nil
+            if session != nil { isPaused = wasPaused }
+        }
+    }
+
+    /// Updates internal scale from the Pause Menu's Quick Settings: adjusts
+    /// this game's override when one is set, else the global setting.
+    func setQuickInternalScale(_ scale: Int) {
+        let clamped = InternalResolution.clamp(scale)
+        if let key = overrideKey, app.gameOverrides.overrides(for: key)?.internalScale != nil {
+            app.updateGameOverrides(forKey: key) { $0.internalScale = clamped }
+        } else {
+            app.internalScale = clamped
+        }
+    }
+
+    /// Updates PGXP master toggle from the Pause Menu's Quick Settings:
+    /// adjusts this game's override when one is set, else the global setting.
+    func setQuickPgxpEnabled(_ enabled: Bool) {
+        if let key = overrideKey, app.gameOverrides.overrides(for: key)?.pgxpEnabled != nil {
+            app.updateGameOverrides(forKey: key) { $0.pgxpEnabled = enabled }
+        } else {
+            app.pgxpEnabled = enabled
+        }
     }
 
     /// The window took its full screen (or found it already taken).
@@ -306,7 +397,7 @@ final class OpenGame: Identifiable {
         do {
             let disc = try DiscFiles.read(entry.url, disc: entry.disc)
             let serial = entry.identity.serial
-            session.requestSwap(disc, readbacks: app.readbacksChoice(serial: serial)) {
+            session.requestSwap(disc, readbacks: app.readbacksChoice(key: overrideKey, serial: serial)) {
                 [weak self] error in
                 // An answer after an eject is not this game's.
                 guard let self, self.session === session else { return }
@@ -349,7 +440,7 @@ final class OpenGame: Identifiable {
 
     /// A game is running and nothing is in the way of a save or a load.
     var canUseStates: Bool {
-        session != nil && !app.isDialogShown && !app.finishingExit && app.resumeFailure == nil
+        session != nil && gameSettingsTarget == nil && !app.isDialogShown && !app.finishingExit && app.resumeFailure == nil
     }
 
     /// Saves the picture on screen to `~/Pictures/Substation/`, and says
@@ -525,6 +616,8 @@ final class OpenGame: Identifiable {
     func teardown() {
         // Its pause goes with it.
         _ = surfaces.closeAll()
+        gameSettingsTarget = nil
+        pausedBeforeSettings = nil
         saveStatesNav = nil
         pendingAnalog = [nil, nil]
         // Banks the session under this game before the session goes.
@@ -664,7 +757,7 @@ final class OpenGame: Identifiable {
         guard isOpen(surface) != open else { return }
         if surface == .pauseMenu && open {
             menu.open(discCount: currentDiscs.count, insertedDisc: currentDiscIndex ?? 0,
-                      pgxpLocked: app.pgxpPresetDecides(\.enabled),
+                      pgxpLocked: app.pgxpPresetDecides(\.enabled, for: self),
                       port2Connected: app.port2Connected)
         }
         if surface == .saveStates && !open { saveStatesNav = nil }
@@ -707,6 +800,7 @@ final class OpenGame: Identifiable {
     /// For an eject, a disc swap or an exit prompt: every surface goes, and
     /// with them the pause they held.
     func closeAllSurfaces() {
+        closeGameSettings()
         saveStatesNav = nil
         pendingAnalog = [nil, nil]
         apply(surfaces.closeAll())
@@ -745,6 +839,7 @@ final class OpenGame: Identifiable {
         case .none: break
         case .close: setSurface(.pauseMenu, open: false)
         case .saveStates: openSaveStates(from: .menu)
+        case .gameSettings: openGameSettings()
         case .reset:
             setSurface(.pauseMenu, open: false)
             reset()
@@ -753,7 +848,7 @@ final class OpenGame: Identifiable {
             app.eject(self)
         case .adjust(let setting, let delta): adjust(setting, by: delta)
         case .toggle(.volume): app.toggleMute()
-        case .toggle(.pgxp): app.pgxpEnabled.toggle()
+        case .toggle(.pgxp): setQuickPgxpEnabled(!effectivePgxpEnabled)
         case .toggle(.analog): pendingAnalog[0] = !analogShown(port: 0)
         case .toggle(.analog2): pendingAnalog[1] = !analogShown(port: 1)
         case .toggle(.speed), .toggle(.resolution): break
@@ -790,7 +885,7 @@ final class OpenGame: Identifiable {
     /// The controller's Home: the pause menu, as the PS button opens a
     /// console's. The panel on top of it closes first.
     func homePressed() {
-        guard session != nil else { return }
+        guard session != nil, gameSettingsTarget == nil else { return }
         if isOpen(.saveStates) {
             setSurface(.saveStates, open: false)
         } else if isOpen(.pauseMenu) {
@@ -814,10 +909,9 @@ final class OpenGame: Identifiable {
             app.speed = min(max(app.speed + delta, SpeedSetting.choices.lowerBound),
                             SpeedSetting.choices.upperBound)
         case .resolution:
-            app.internalScale = min(max(app.internalScale + delta, InternalResolution.range.lowerBound),
-                                    InternalResolution.range.upperBound)
+            setQuickInternalScale(effectiveInternalScale + delta)
         case .pgxp:
-            app.pgxpEnabled = delta > 0
+            setQuickPgxpEnabled(delta > 0)
         case .analog:
             pendingAnalog[0] = delta > 0
         case .analog2:
@@ -974,6 +1068,13 @@ final class OpenGame: Identifiable {
                        analogPressed: Bool = false, rewindPressed: Bool = false) {
         if port == 0 {
             let moves = padEdges.moves(for: snapshot)
+            if gameSettingsTarget != nil {
+                analogHeldByPad[0] = false
+                inputs[0] = InputMap()
+                session?.setButtons(inputs[0].mask)
+                session?.setSticks(inputs[0].sticks)
+                return
+            }
             if surfaces.pausesGame {
                 for move in moves { surfaceMove(move) }
                 analogHeldByPad[0] = false
@@ -996,7 +1097,7 @@ final class OpenGame: Identifiable {
             session?.setButtons(game.mask)
             session?.setSticks(game.sticks)
         } else if port == 1 {
-            if surfaces.pausesGame {
+            if surfaces.pausesGame || gameSettingsTarget != nil {
                 analogHeldByPad[1] = false
                 inputs[1] = InputMap()
                 session?.setPortButtons(1, inputs[1].mask)

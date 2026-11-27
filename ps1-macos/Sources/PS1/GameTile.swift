@@ -21,6 +21,7 @@ struct GameTile: View {
     let isSelected: Bool
     let select: () -> Void
     let play: () -> Void
+    let gameSettings: () -> Void
     let chooseCover: () -> Void
     /// Nil when the disc names no serial: the collection is keyed on serials,
     /// so there is nothing to look up and the item would only ever fail.
@@ -81,8 +82,9 @@ struct GameTile: View {
         // the double-click interval has run out.
         .simultaneousGesture(TapGesture().onEnded(select))
         .contextMenu {
-            GameContextMenu(entry: entry, play: play, chooseCover: chooseCover,
-                            downloadCover: downloadCover, removeCover: removeCover)
+            GameContextMenu(entry: entry, play: play, gameSettings: gameSettings,
+                            chooseCover: chooseCover, downloadCover: downloadCover,
+                            removeCover: removeCover)
         }
         .help(entry.title)
         .accessibilityElement(children: .ignore)

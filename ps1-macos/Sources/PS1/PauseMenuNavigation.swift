@@ -5,7 +5,7 @@ enum MenuMove: Hashable { case up, down, left, right, confirm, back }
 /// The pause menu's rows that take the highlight, top to bottom. About This
 /// Game is read-only and takes none.
 enum PauseMenuItem: CaseIterable, Hashable {
-    case saveStates, disc, speed, resolution, volume, pgxp, analog, analog2, reset, quitGame
+    case saveStates, disc, speed, resolution, volume, pgxp, analog, analog2, gameSettings, reset, quitGame
 }
 
 /// A Quick Settings control, as a step or a toggle names it.
@@ -16,6 +16,7 @@ enum QuickSetting: Equatable { case speed, resolution, volume, pgxp, analog, ana
 enum PauseMenuAction: Equatable {
     case none, close
     case saveStates
+    case gameSettings
     case reset, quitGame
     /// ← or →: one step down or up. A switch takes Off or On; nothing wraps.
     case adjust(QuickSetting, Int)
@@ -105,7 +106,7 @@ struct PauseMenuNavigation {
         case .pgxp: return .adjust(.pgxp, delta)
         case .analog: return .adjust(.analog, delta)
         case .analog2: return .adjust(.analog2, delta)
-        case .reset, .quitGame, nil: break
+        case .gameSettings, .reset, .quitGame, nil: break
         }
         return .none
     }
@@ -120,6 +121,7 @@ struct PauseMenuNavigation {
         case .pgxp: .toggle(.pgxp)
         case .analog: .toggle(.analog)
         case .analog2: .toggle(.analog2)
+        case .gameSettings: .gameSettings
         case .reset: .reset
         case .quitGame: .quitGame
         }

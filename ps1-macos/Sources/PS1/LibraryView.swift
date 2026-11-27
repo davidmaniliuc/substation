@@ -21,6 +21,7 @@ struct LibraryView: View {
     var searchText: String = ""
     let coverURL: (GameEntry) -> URL?
     let play: (GameEntry) -> Void
+    let gameSettings: (GameEntry) -> Void
     let chooseCover: (GameEntry) -> Void
     let downloadCover: (GameEntry) -> Void
     let removeCover: (GameEntry) -> Void
@@ -183,6 +184,7 @@ struct LibraryView: View {
         return GameContextMenu(
             entry: entry,
             play: { play(entry) },
+            gameSettings: { gameSettings(entry) },
             chooseCover: { chooseCover(entry) },
             downloadCover: entry.serial == nil ? nil : { downloadCover(entry) },
             removeCover: coverURL(entry) == nil ? nil : { removeCover(entry) })
@@ -210,6 +212,7 @@ struct LibraryView: View {
                                 gridFocused = true
                             },
                             play: menu.play,
+                            gameSettings: menu.gameSettings,
                             chooseCover: menu.chooseCover,
                             downloadCover: menu.downloadCover,
                             removeCover: menu.removeCover)

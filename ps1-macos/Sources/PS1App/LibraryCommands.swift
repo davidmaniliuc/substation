@@ -22,6 +22,8 @@ struct LibraryCommands: Commands {
             let selected = model.selectedGame
             Button("Play") { selected.map(model.play) }
                 .disabled(selected == nil || model.isDialogShown)
+            Button("Game Settings…") { selected.map(model.openGameSettings(for:)) }
+                .disabled(selected == nil || model.isDialogShown)
             Button("Show in Finder") {
                 if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected.url]) }
             }

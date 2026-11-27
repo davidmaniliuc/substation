@@ -92,6 +92,8 @@ enum SettingsCopy {
         title: "Skip Startup Logos"
     )
 
+    static let fastBootPerGameFooter = "Applies the next time this game starts."
+
     static let savingFooter = "These saves are separate from in-game memory card saves."
 
     // MARK: Library
@@ -312,6 +314,6 @@ enum SettingsCopy {
         allInfo.flatMap(\.allText)
             + DitherMode.allCases.map(ditherOptionTitle)
             + Deinterlacing.allCases.map(\.title)
-            + [savingFooter, pgxpOffFooter, vramReadbacksNoGameFooter, gamepadMappingFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
+            + [savingFooter, fastBootPerGameFooter, pgxpOffFooter, vramReadbacksNoGameFooter, gamepadMappingFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }

@@ -6,6 +6,7 @@ import SwiftUI
 struct GameContextMenu: View {
     let entry: GameEntry
     let play: () -> Void
+    let gameSettings: () -> Void
     let chooseCover: () -> Void
     /// Nil when the disc names no serial: the collection is keyed on serials.
     let downloadCover: (() -> Void)?
@@ -14,6 +15,7 @@ struct GameContextMenu: View {
 
     var body: some View {
         Button("Play", action: play)
+        Button("Game Settings…", action: gameSettings)
         Divider()
         Button("Choose Cover Image…", action: chooseCover)
         if let downloadCover {

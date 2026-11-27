@@ -149,6 +149,7 @@ private struct PauseMenuList: View {
                     pgxp
                     analog
                     if nav.isShown(.analog2) { analog2 }
+                    gameSettings
 
                     heading("Machine")
                     action(.reset, icon: "arrow.counterclockwise", title: "Reset")
@@ -234,8 +235,11 @@ private struct PauseMenuList: View {
             RowIcon(name: "square.resize")
             Titled("Resolution", subtitle: game.outputSize.map { "\($0.width)×\($0.height)" })
             Spacer(minLength: 8)
-            Text("\(model.internalScale)×").font(.system(size: 13)).monospacedDigit()
-            Stepper("Resolution", value: $model.internalScale, in: InternalResolution.range)
+            Text("\(game.effectiveInternalScale)×").font(.system(size: 13)).monospacedDigit()
+            Stepper("Resolution", value: Binding(
+                get: { game.effectiveInternalScale },
+                set: { game.setQuickInternalScale($0) }),
+                in: InternalResolution.range)
                 .labelsHidden()
                 .controlSize(.small)
         }
@@ -273,7 +277,9 @@ private struct PauseMenuList: View {
             RowIcon(name: "cube.transparent")
             Titled("PGXP", subtitle: locked ? "Set by this game's preset" : "Steadier 3D geometry")
             Spacer(minLength: 8)
-            Toggle("PGXP", isOn: $model.pgxpEnabled)
+            Toggle("PGXP", isOn: Binding(
+                get: { game.effectivePgxpEnabled },
+                set: { game.setQuickPgxpEnabled($0) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 .disabled(locked)
         }
@@ -302,6 +308,17 @@ private struct PauseMenuList: View {
                 set: { game.perform(.adjust(.analog2, $0 ? 1 : -1)) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
+    }
+
+    private var gameSettings: some View {
+        Button { confirm(.gameSettings) } label: {
+            row(.gameSettings) {
+                RowIcon(name: "slider.horizontal.3")
+                Titled("Game Settings…", subtitle: game.gameSettingsSummary)
+                Spacer(minLength: 0)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     /// Reset and Quit Game: a click is a hover, then the confirm a key sends.

@@ -30,6 +30,8 @@ struct MachineCommands: Commands {
             Button("Take Screenshot") { game?.takeScreenshot() }
                 .keyboardShortcut("s")
                 .disabled(game == nil)
+            Button("Game Settings…") { game?.openGameSettings() }
+                .disabled(game?.canOpenGameSettings != true)
 
             Divider()
 
