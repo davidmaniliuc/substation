@@ -846,6 +846,42 @@ public final class EmulatorViewModel {
         return stored.overrideCount + extraVram
     }
 
+    /// One overridable setting as `game` runs it: its override where it has
+    /// one, else the global value.
+    func setting<T>(_ field: WritableKeyPath<GameOverrides, T?>,
+                    global: ReferenceWritableKeyPath<EmulatorViewModel, T>,
+                    for game: OpenGame?) -> T {
+        if let key = game?.overrideKey, let value = gameOverrides.overrides(for: key)?[keyPath: field] {
+            return value
+        }
+        return self[keyPath: global]
+    }
+
+    /// Changes the setting `setting` read: the game's override where it has
+    /// one, so a menu never edits a value the game does not run under.
+    func setSetting<T>(_ field: WritableKeyPath<GameOverrides, T?>,
+                       global: ReferenceWritableKeyPath<EmulatorViewModel, T>,
+                       for game: OpenGame?, to value: T) {
+        if let key = game?.overrideKey, gameOverrides.overrides(for: key)?[keyPath: field] != nil {
+            updateGameOverrides(forKey: key) { $0[keyPath: field] = value }
+        } else {
+            self[keyPath: global] = value
+        }
+    }
+
+    /// `setting` for the running game, as a key path the menus can bind.
+    subscript<T>(running field: WritableKeyPath<GameOverrides, T?>,
+                 global global: ReferenceWritableKeyPath<EmulatorViewModel, T>) -> T {
+        get { setting(field, global: global, for: game) }
+        set { setSetting(field, global: global, for: game, to: newValue) }
+    }
+
+    /// The global tolerance as the per-game override stores it.
+    var pgxpToleranceChoice: PgxpTolerance {
+        get { PgxpTolerance(floatValue: pgxpTolerance) }
+        set { pgxpTolerance = newValue.floatValue }
+    }
+
     /// Updates a game's overrides and pushes new settings live to matching open games.
     func updateGameOverrides(forKey key: String, _ mutate: (inout GameOverrides) -> Void) {
         gameOverrides.update(for: key, mutate)

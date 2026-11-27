@@ -596,6 +596,54 @@ private func makeBin(name: String, serial: String? = nil) throws -> GameEntry {
         }
     }
 
+    @Test func theVideoMenuChangesTheRunningGamesOverrideAndOtherwiseTheGlobal() {
+        withSuite { defaults in
+            let overridesDir = makeTempDir()
+            defer { try? FileManager.default.removeItem(at: overridesDir) }
+            let model = makeModel(defaults, overridesDir: overridesDir)
+
+            let savedDither = model.ditherMode
+            let savedFilter = model.textureFilter
+            let savedTolerance = model.pgxpTolerance
+            defer {
+                model.ditherMode = savedDither
+                model.textureFilter = savedFilter
+                model.pgxpTolerance = savedTolerance
+            }
+            model.ditherMode = .native
+            model.textureFilter = .nearest
+            model.pgxpTolerance = -1
+
+            let session = ScriptedSession()
+            model.installSessionForTesting(session, resumeKey: "GAME-A", ownWindow: true)
+            defer { model.ejectAllForTesting() }
+            model.updateGameOverrides(forKey: "GAME-A") {
+                $0.ditherMode = .off
+                $0.pgxpTolerance = .two
+            }
+
+            // The menu shows what the game runs under, not the global value.
+            #expect(model[running: \.ditherMode, global: \.ditherMode] == .off)
+            #expect(model[running: \.pgxpTolerance, global: \.pgxpToleranceChoice] == .two)
+            #expect(model[running: \.textureFilter, global: \.textureFilter] == .nearest)
+
+            // An overridden setting changes the override and leaves the global alone.
+            model[running: \.ditherMode, global: \.ditherMode] = .trueColor
+            model[running: \.pgxpTolerance, global: \.pgxpToleranceChoice] = .one
+            #expect(model.gameOverrides.overrides(for: "GAME-A")?.ditherMode == .trueColor)
+            #expect(model.gameOverrides.overrides(for: "GAME-A")?.pgxpTolerance == .one)
+            #expect(session.settings.last?.dither == .trueColor)
+            #expect(model.ditherMode == .native)
+            #expect(model.pgxpTolerance == -1)
+
+            // One the game inherits changes the global and creates no override.
+            model[running: \.textureFilter, global: \.textureFilter] = .bilinear
+            #expect(model.textureFilter == .bilinear)
+            #expect(model.gameOverrides.overrides(for: "GAME-A")?.textureFilter == nil)
+            #expect(session.settings.last?.textureFilter == .bilinear)
+        }
+    }
+
     @Test func pgxpPerGameOverridesAffectPresetAndEffectiveFlags() throws {
         try withSuite { defaults in
             let overridesDir = makeTempDir()

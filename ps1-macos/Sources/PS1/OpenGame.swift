@@ -337,25 +337,16 @@ final class OpenGame: Identifiable {
         }
     }
 
-    /// Updates internal scale from the Pause Menu's Quick Settings: adjusts
-    /// this game's override when one is set, else the global setting.
+    /// The Pause Menu's Resolution: this game's override when it has one,
+    /// else the global setting.
     func setQuickInternalScale(_ scale: Int) {
-        let clamped = InternalResolution.clamp(scale)
-        if let key = overrideKey, app.gameOverrides.overrides(for: key)?.internalScale != nil {
-            app.updateGameOverrides(forKey: key) { $0.internalScale = clamped }
-        } else {
-            app.internalScale = clamped
-        }
+        app.setSetting(\.internalScale, global: \.internalScale, for: self,
+                       to: InternalResolution.clamp(scale))
     }
 
-    /// Updates PGXP master toggle from the Pause Menu's Quick Settings:
-    /// adjusts this game's override when one is set, else the global setting.
+    /// The Pause Menu's PGXP switch, routed as `setQuickInternalScale` is.
     func setQuickPgxpEnabled(_ enabled: Bool) {
-        if let key = overrideKey, app.gameOverrides.overrides(for: key)?.pgxpEnabled != nil {
-            app.updateGameOverrides(forKey: key) { $0.pgxpEnabled = enabled }
-        } else {
-            app.pgxpEnabled = enabled
-        }
+        app.setSetting(\.pgxpEnabled, global: \.pgxpEnabled, for: self, to: enabled)
     }
 
     /// The window took its full screen (or found it already taken).
