@@ -360,6 +360,36 @@ private func fullyOverridden() -> GameOverrides {
 
         store.update(for: "SLUS-00707") { $0.fastBoot = true }
         #expect(GameOverridesStore(directory: dir).overrides(for: "SLUS-00707")?.fastBoot == true)
+        let aside = dir.appendingPathComponent("overrides.damaged.json")
+        #expect(try Data(contentsOf: aside) == Data("not valid json".utf8))
+    }
+
+    @Test func aRecordThatNoLongerDecodesSurvivesWritesToOtherGames() throws {
+        let dir = makeTempDir()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("overrides.json")
+        let json = #"{"SLUS-00594":{"internalScale":4},"SCES-00344":{"ditherMode":99,"fastBoot":true}}"#
+        try Data(json.utf8).write(to: file)
+
+        let store = GameOverridesStore(directory: dir)
+        #expect(store.overrides(for: "SLUS-00594")?.internalScale == 4)
+        #expect(store.overrides(for: "SCES-00344") == nil)
+
+        store.update(for: "SLUS-00707") { $0.fastBoot = true }
+        let written = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]
+        let kept = written?["SCES-00344"] as? [String: Any]
+        #expect(kept?["ditherMode"] as? Int == 99)
+        #expect(kept?["fastBoot"] as? Bool == true)
+
+        let reloaded = GameOverridesStore(directory: dir)
+        #expect(reloaded.overrides(for: "SLUS-00594")?.internalScale == 4)
+        #expect(reloaded.overrides(for: "SLUS-00707")?.fastBoot == true)
+
+        // A profile set for that game afterwards replaces the unreadable one.
+        reloaded.update(for: "SCES-00344") { $0.pgxpEnabled = true }
+        #expect(GameOverridesStore(directory: dir).overrides(for: "SCES-00344")
+                == GameOverrides(pgxpEnabled: true))
     }
 }
 
