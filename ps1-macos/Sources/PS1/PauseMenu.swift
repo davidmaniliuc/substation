@@ -148,6 +148,7 @@ private struct PauseMenuList: View {
                     volume
                     pgxp
                     analog
+                    if nav.isShown(.analog2) { analog2 }
 
                     heading("Machine")
                     action(.reset, icon: "arrow.counterclockwise", title: "Reset")
@@ -282,11 +283,23 @@ private struct PauseMenuList: View {
     private var analog: some View {
         row(.analog) {
             RowIcon(name: "gamecontroller")
-            Titled("Analog", subtitle: "DualShock sticks")
+            Titled("Analog", subtitle: nav.isShown(.analog2) ? "Port 1 DualShock sticks" : "DualShock sticks")
             Spacer(minLength: 8)
             Toggle("Analog", isOn: Binding(
                 get: { game.analogShown },
                 set: { game.perform(.adjust(.analog, $0 ? 1 : -1)) }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        }
+    }
+
+    private var analog2: some View {
+        row(.analog2) {
+            RowIcon(name: "gamecontroller")
+            Titled("Port 2 Analog", subtitle: "DualShock sticks")
+            Spacer(minLength: 8)
+            Toggle("Port 2 Analog", isOn: Binding(
+                get: { game.analogShown(port: 1) },
+                set: { game.perform(.adjust(.analog2, $0 ? 1 : -1)) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
     }

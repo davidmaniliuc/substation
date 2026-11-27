@@ -5,11 +5,11 @@ enum MenuMove: Hashable { case up, down, left, right, confirm, back }
 /// The pause menu's rows that take the highlight, top to bottom. About This
 /// Game is read-only and takes none.
 enum PauseMenuItem: CaseIterable, Hashable {
-    case saveStates, disc, speed, resolution, volume, pgxp, analog, reset, quitGame
+    case saveStates, disc, speed, resolution, volume, pgxp, analog, analog2, reset, quitGame
 }
 
 /// A Quick Settings control, as a step or a toggle names it.
-enum QuickSetting: Equatable { case speed, resolution, volume, pgxp, analog }
+enum QuickSetting: Equatable { case speed, resolution, volume, pgxp, analog, analog2 }
 
 /// What a move asks the model to do. Moving the highlight and picking a disc
 /// the navigation does on its own.
@@ -41,18 +41,29 @@ struct PauseMenuNavigation {
     private(set) var insertedDisc = 0
     /// PGXP while the game's preset decides it: greyed, never highlighted.
     private(set) var pgxpLocked = false
+    /// Port 2 Analog appears only while a controller is assigned to Port 2.
+    private(set) var port2Connected = false
 
     /// For each opening of the menu: nothing highlighted, so Return resumes.
-    mutating func open(discCount: Int, insertedDisc: Int, pgxpLocked: Bool) {
+    mutating func open(discCount: Int, insertedDisc: Int, pgxpLocked: Bool,
+                       port2Connected: Bool = false) {
         self = PauseMenuNavigation()
         self.discCount = discCount
         self.insertedDisc = insertedDisc
         self.pgxpLocked = pgxpLocked
+        self.port2Connected = port2Connected
         discChoice = insertedDisc
     }
 
-    /// The Disc row exists only for a game with more than one disc.
-    func isShown(_ item: PauseMenuItem) -> Bool { item != .disc || discCount > 1 }
+    /// The Disc row exists only for a game with more than one disc; Port 2
+    /// Analog exists only while Port 2 is connected.
+    func isShown(_ item: PauseMenuItem) -> Bool {
+        switch item {
+        case .disc: discCount > 1
+        case .analog2: port2Connected
+        default: true
+        }
+    }
 
     func isEnabled(_ item: PauseMenuItem) -> Bool { isShown(item) && !(item == .pgxp && pgxpLocked) }
 
@@ -93,6 +104,7 @@ struct PauseMenuNavigation {
         case .volume: return .adjust(.volume, delta)
         case .pgxp: return .adjust(.pgxp, delta)
         case .analog: return .adjust(.analog, delta)
+        case .analog2: return .adjust(.analog2, delta)
         case .reset, .quitGame, nil: break
         }
         return .none
@@ -107,6 +119,7 @@ struct PauseMenuNavigation {
         case .volume: .toggle(.volume)
         case .pgxp: .toggle(.pgxp)
         case .analog: .toggle(.analog)
+        case .analog2: .toggle(.analog2)
         case .reset: .reset
         case .quitGame: .quitGame
         }

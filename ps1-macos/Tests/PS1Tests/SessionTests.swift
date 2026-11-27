@@ -168,6 +168,8 @@ struct SessionTests {
         let idle = Ps1PadStatus()
         #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_PAD, pad: pad, card_writes: 0, value: 0))
                 == .pad(PadStatus(analog: true, small: 255, large: 0x40)))
+        #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_PAD2, pad: pad, card_writes: 0, value: 0))
+                == .pad2(PadStatus(analog: true, small: 255, large: 0x40)))
         #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_CARD_WRITE, pad: idle, card_writes: 3, value: 0))
                 == .cardWrites(3))
         #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_REWIND, pad: idle, card_writes: 0, value: 2.5))

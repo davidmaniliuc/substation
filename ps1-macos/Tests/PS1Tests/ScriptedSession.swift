@@ -48,6 +48,12 @@ final class ScriptedSession: GameSession {
     func setButtons(_ mask: UInt16) { calls.append("setButtons(\(mask))") }
     func setSticks(_ s: Sticks) { calls.append("setSticks(\(s.lx), \(s.ly), \(s.rx), \(s.ry))") }
     func pressAnalog() { calls.append("pressAnalog()") }
+    func setPortConnected(_ port: Int, _ connected: Bool) { calls.append("setPortConnected(\(port), \(connected))") }
+    func setPortButtons(_ port: Int, _ mask: UInt16) { calls.append("setPortButtons(\(port), \(mask))") }
+    func setPortSticks(_ port: Int, _ s: Sticks) {
+        calls.append("setPortSticks(\(port), \(s.lx), \(s.ly), \(s.rx), \(s.ry))")
+    }
+    func pressPortAnalog(_ port: Int) { calls.append("pressPortAnalog(\(port))") }
     func setSpeed(_ speed: Int) { calls.append("setSpeed(\(speed))") }
     func setPaused(_ paused: Bool) { calls.append("setPaused(\(paused))") }
     func setRewinding(_ on: Bool) { calls.append("setRewinding(\(on))") }

@@ -1,16 +1,54 @@
 import SwiftUI
 
-/// The keyboard layout, rebindable, and how game controllers are picked up.
+/// Controller port routing, vibration, rewind button, and rebindable keyboard
+/// and gamepad button mappings.
 ///
-/// Clicking a key starts a capture on the model (`beginCapture`): the row
-/// shows `WaitingDots` until the next key-down in this window binds it, and a
-/// click anywhere else cancels. The bindings are `model.keyBindings`, the same
-/// value `keyDown`/`keyUp` read, so a change applies to a running game at once.
+/// Clicking a key or gamepad cap starts a capture on the model
+/// (`beginCapture` / `beginGamepadCapture`): the row shows `WaitingDots` until
+/// the next key or controller button press binds it, and a click anywhere else
+/// cancels. Changes apply to a running game at once.
 struct ControlsSettingsPane: View {
+    private enum MappingDevice: String, CaseIterable {
+        case keyboard = "Keyboard"
+        case gamepad = "Gamepad"
+    }
+
     @Bindable var model: EmulatorViewModel
+    @State private var mappingDevice: MappingDevice = .keyboard
 
     var body: some View {
         Form {
+            Section("Controller Ports") {
+                SettingRow(SettingsCopy.port1Controller) {
+                    Picker(SettingsCopy.port1Controller.title, selection: $model.port1ControllerChoice) {
+                        Text(model.port1AutomaticTitle).tag(Port1Choice.automatic)
+                        Text("Keyboard Only").tag(Port1Choice.keyboardOnly)
+                        if !model.connectedControllers.isEmpty {
+                            Divider()
+                            ForEach(model.connectedControllers) { controller in
+                                Text(controller.displayName).tag(Port1Choice.controller(controller.id))
+                            }
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                SettingRow(SettingsCopy.port2Controller) {
+                    Picker(SettingsCopy.port2Controller.title, selection: $model.port2ControllerChoice) {
+                        Text(model.port2AutomaticTitle).tag(Port2Choice.automatic)
+                        Text("Disconnected").tag(Port2Choice.off)
+                        if !model.connectedControllers.isEmpty {
+                            Divider()
+                            ForEach(model.connectedControllers) { controller in
+                                Text(controller.displayName).tag(Port2Choice.controller(controller.id))
+                            }
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Controller") {
                 SettingToggle(SettingsCopy.vibration, isOn: $model.vibration)
                 SettingRow(SettingsCopy.rewindPadButton) {
@@ -23,21 +61,53 @@ struct ControlsSettingsPane: View {
             }
 
             Section {
-                ForEach(KeyBindings.controls, id: \.self) { control in
-                    LabeledContent(control.title) {
-                        KeyBindingField(
-                            key: model.keyBindings.key(for: control),
-                            isCapturing: model.capturing == control,
-                            begin: { model.beginCapture(control) })
+                Picker("Mapping Device", selection: $mappingDevice) {
+                    ForEach(MappingDevice.allCases, id: \.self) { device in
+                        Text(device.rawValue).tag(device)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: mappingDevice) { _, _ in model.cancelCapture() }
+
+                switch mappingDevice {
+                case .keyboard:
+                    ForEach(KeyBindings.controls, id: \.self) { control in
+                        LabeledContent(control.title) {
+                            KeyBindingField(
+                                key: model.keyBindings.key(for: control),
+                                isCapturing: model.capturing == control,
+                                begin: { model.beginCapture(control) })
+                        }
+                    }
+                case .gamepad:
+                    ForEach(GamepadBindings.controls, id: \.self) { control in
+                        LabeledContent(control.title) {
+                            GamepadBindingField(
+                                input: model.gamepadBindings.input(for: control),
+                                isCapturing: model.capturingGamepad == control,
+                                begin: { model.beginGamepadCapture(control) })
+                        }
                     }
                 }
             } header: {
                 HStack {
-                    Text("Keyboard")
+                    Text("Button Mapping")
                     Spacer()
-                    Button("Restore Defaults") { model.restoreDefaultKeyBindings() }
-                        .controlSize(.small)
-                        .disabled(model.keyBindings.isDefault)
+                    Button("Restore Defaults") {
+                        switch mappingDevice {
+                        case .keyboard: model.restoreDefaultKeyBindings()
+                        case .gamepad: model.restoreDefaultGamepadBindings()
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(mappingDevice == .keyboard
+                              ? model.keyBindings.isDefault
+                              : model.gamepadBindings.isDefault)
+                }
+            } footer: {
+                if mappingDevice == .gamepad {
+                    Text(SettingsCopy.gamepadMappingFooter)
                 }
             }
 
@@ -63,8 +133,8 @@ struct ControlsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        // A capture left running would take the first key typed in the
-        // window the next time it opens.
+        // A capture left running would take the first key or button pressed
+        // the next time the window opens.
         .onDisappear { model.cancelCapture() }
     }
 }
@@ -87,6 +157,29 @@ private struct KeyBindingField: View {
         }
         .buttonStyle(.plain)
         .help(isCapturing ? "Press a key, or click elsewhere to cancel" : "Click to change")
+    }
+}
+
+/// A gamepad binding's cap: click it, and it waits for a controller button.
+private struct GamepadBindingField: View {
+    let input: GamepadInput?
+    let isCapturing: Bool
+    let begin: () -> Void
+
+    var body: some View {
+        Button(action: begin) {
+            if isCapturing {
+                KeyCapShape { WaitingDots() }
+            } else if let input {
+                KeyCap(input.title)
+            } else {
+                KeyCap("Not Set").foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(isCapturing
+              ? "Press a controller button, Delete to clear, or click elsewhere to cancel"
+              : "Click to change")
     }
 }
 

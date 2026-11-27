@@ -26,7 +26,7 @@ enum PadButton: UInt16, CaseIterable {
 /// The inversion is the whole point: the pad reports **0 for pressed**, so idle
 /// is 0xFFFF and pressing CLEARS a bit. Getting this backwards makes every
 /// button appear held down at once, which reads as a stuck controller.
-struct InputMap {
+struct InputMap: Equatable, Sendable {
     private var pressed: UInt16 = 0
     /// Centred for the keyboard, which has no sticks.
     var sticks = Sticks.centred

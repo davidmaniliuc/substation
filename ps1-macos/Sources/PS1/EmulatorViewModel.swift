@@ -163,7 +163,7 @@ public final class EmulatorViewModel {
         get { vibrationSetting.enabled }
         set { vibrationSetting.set(newValue) }
     }
-    private let haptics = PadHaptics()
+    private let haptics = [PadHaptics(), PadHaptics()]
 
     /// Kept by the resign/become-active observers in `init`, so the rumble
     /// gate and the play clock read one value.
@@ -207,12 +207,16 @@ public final class EmulatorViewModel {
     init(saveStates: SaveStateStore, autoSave: AutoSaveSetting,
          rewind: RewindSetting = RewindSetting(), bios: BiosLibrary = BiosLibrary(),
          vramReadbacks: VramReadbacksSetting = VramReadbacksSetting(),
-         gameWindow: GameWindowSetting = GameWindowSetting()) {
+         gameWindow: GameWindowSetting = GameWindowSetting(),
+         gamepadBindings: GamepadBindings = GamepadBindings(),
+         controllerAssignment: ControllerAssignment = ControllerAssignment()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
         self.rewindSetting = rewind
         self.vramReadbacksSetting = vramReadbacks
         self.gameWindowSetting = gameWindow
+        self.gamepadBindings = gamepadBindings
+        self.controllerAssignment = controllerAssignment
         self.bios = bios
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         if stage == .onboarding { surveyBios() }
@@ -262,7 +266,7 @@ public final class EmulatorViewModel {
                 self?.setFastForwarding(false)
                 // The same trap as Tab: a held key's release is never seen.
                 self?.game?.releaseRewind()
-                self?.haptics.stop()
+                self?.haptics.forEach { $0.stop() }
                 self?.game?.updatePlayClock()
             }
         }
@@ -1655,6 +1659,7 @@ public final class EmulatorViewModel {
             game.discSerial = identity.serial
             applySpeed()
             session.setBandShown(game.hudVisible && !game.isOpen(.pauseMenu))
+            if port2Connected { session.setPortConnected(1, true) }
             try session.start()
             game.startAutoSave()
 
@@ -1716,7 +1721,7 @@ public final class EmulatorViewModel {
         let steps = gameSwitch.removed(old.id)
         game = gameSwitch.running.flatMap(game(with:))
         if wasRunning {
-            haptics.release()
+            haptics.forEach { $0.release() }
             // A held fast-forward key's release would never arrive, and the
             // next game would start fast-forwarding.
             speedSetting.isFastForwarding = false
@@ -1975,15 +1980,19 @@ public final class EmulatorViewModel {
     }
 
     func driveHaptics() {
-        haptics.drive(MotorDrive(status: game?.lastPadStatus ?? .idle, allowed: rumbleAllowed))
+        let allowed = rumbleAllowed
+        haptics[0].drive(MotorDrive(status: game?.lastPadStatus(port: 0) ?? .idle, allowed: allowed))
+        haptics[1].drive(MotorDrive(status: game?.lastPadStatus(port: 1) ?? .idle,
+                                    allowed: allowed && port2Connected))
     }
 
-    /// Re-drives the motors whenever `rumbleAllowed` changes. Observation
-    /// reports a change before it lands, so the drive hops to the main queue
-    /// and re-arms from there.
+    /// Re-drives the motors whenever `rumbleAllowed` or Port 2 connection
+    /// changes. Observation reports a change before it lands, so the drive
+    /// hops to the main queue and re-arms from there.
     private func observeRumbleGate() {
         withObservationTracking {
             _ = rumbleAllowed
+            _ = port2Connected
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -2007,15 +2016,27 @@ public final class EmulatorViewModel {
     // of the shipped binary at zero cost to the suite.
 
     #if DEBUG
-    var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
+    var hapticsDriveForTesting: MotorDrive { haptics[0].driveForTesting }
+    func hapticsDriveForTesting(port: Int) -> MotorDrive { haptics[port].driveForTesting }
     /// The hosted test app is not the active app, so a test sets it.
     func simulateAppActiveForTesting(_ active: Bool) {
         appActive = active
         game?.updatePlayClock()
     }
-    func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
+    func simulateControllerInputForTesting(_ id: ObjectIdentifier, port: Int = 0) {
+        haptics[port].noteInput(from: id)
+    }
     func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
     func simulateControllerConnectForTesting() { controllerConnected() }
+    func simulateConnectedControllersForTesting(_ controllers: [ConnectedController]) {
+        connectedControllers = controllers
+        controllerAssignment.pruneDisconnected(connected: controllers)
+        syncControllerRouting()
+    }
+    func simulateGamepadSnapshotForTesting(_ snapshot: GamepadSnapshot, from controllerID: String,
+                                           objectID: ObjectIdentifier? = nil) {
+        handleGamepadSnapshot(snapshot, from: controllerID, objectID: objectID)
+    }
 
     func simulateOnboardingForTesting() { stage = .onboarding }
 
@@ -2030,6 +2051,7 @@ public final class EmulatorViewModel {
         let game = OpenGame(app: self, session: s, hostView: nil, inOwnWindow: ownWindow, fullScreen: false)
         game.resumeKey = resumeKey
         install(game)
+        if port2Connected { s.setPortConnected(1, true) }
     }
 
     func ejectNowForTesting(_ target: OpenGame? = nil) { ejectNow(target ?? game) }
@@ -2044,7 +2066,10 @@ public final class EmulatorViewModel {
 
     /// Drives the exact code path `bind(_:)`'s `valueChangedHandler` drives,
     /// without needing a real `GCExtendedGamepad`; see `applyPadInput`.
-    func simulatePadInputForTesting(_ snapshot: InputMap) { applyPadInput(snapshot) }
+    func simulatePadInputForTesting(_ snapshot: InputMap, port: Int = 0,
+                                    analogPressed: Bool = false, rewindPressed: Bool = false) {
+        applyPadInput(snapshot, port: port, analogPressed: analogPressed, rewindPressed: rewindPressed)
+    }
     #endif
 
     // MARK: Input
@@ -2057,17 +2082,67 @@ public final class EmulatorViewModel {
     /// The keyboard layout, persisted. The Controls pane rebinds it.
     private(set) var keyBindings = KeyBindings()
 
+    /// The gamepad button layout, persisted. The Controls pane rebinds it.
+    private(set) var gamepadBindings: GamepadBindings
+
+    /// Currently connected extended game controllers, for port assignment.
+    private(set) var connectedControllers: [ConnectedController] = []
+    private var controllerAssignment: ControllerAssignment
+    private var lastRouting = ResolvedControllerRouting(
+        port1Keyboard: true, port1Controller: nil, port2Controller: nil)
+    private var lastGamepadPressed: [String: Set<GamepadInput>] = [:]
+
+    var port1ControllerChoice: Port1Choice {
+        get { controllerAssignment.port1 }
+        set {
+            controllerAssignment.setPort1(newValue)
+            syncControllerRouting()
+        }
+    }
+
+    var port2ControllerChoice: Port2Choice {
+        get { controllerAssignment.port2 }
+        set {
+            controllerAssignment.setPort2(newValue)
+            syncControllerRouting()
+        }
+    }
+
+    var resolvedControllerRouting: ResolvedControllerRouting {
+        controllerAssignment.resolve(connected: connectedControllers)
+    }
+
+    var port1UsesKeyboard: Bool { resolvedControllerRouting.port1Keyboard }
+    var port2Connected: Bool { resolvedControllerRouting.port2Connected }
+    var port1AutomaticTitle: String { controllerAssignment.port1AutomaticTitle(connected: connectedControllers) }
+    var port2AutomaticTitle: String { controllerAssignment.port2AutomaticTitle(connected: connectedControllers) }
+
     /// The control whose row in the Controls pane is waiting for a key, if
     /// any. The next key-down in the Settings window binds to it; a click
     /// anywhere, Escape, or a ⌘ shortcut cancels.
     private(set) var capturing: PadControl?
+
+    /// The control whose row in the Controls pane is waiting for a controller
+    /// button press, if any.
+    private(set) var capturingGamepad: PadControl?
 
     /// Watches for the click that cancels a capture. Installed only while one
     /// is in progress, so it costs nothing the rest of the time.
     private var captureMouseMonitor: Any?
 
     func beginCapture(_ control: PadControl) {
+        capturingGamepad = nil
         capturing = control
+        installCaptureMouseMonitor()
+    }
+
+    func beginGamepadCapture(_ control: PadControl) {
+        capturing = nil
+        capturingGamepad = control
+        installCaptureMouseMonitor()
+    }
+
+    private func installCaptureMouseMonitor() {
         guard captureMouseMonitor == nil else { return }
         captureMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
@@ -2081,15 +2156,33 @@ public final class EmulatorViewModel {
 
     func cancelCapture() {
         capturing = nil
+        capturingGamepad = nil
         if let m = captureMouseMonitor { NSEvent.removeMonitor(m) }
         captureMouseMonitor = nil
     }
 
     /// A key-down while a row is waiting. Returns true when it was consumed.
     /// ⌘ combinations are shortcuts, not keys, so they cancel and pass on
-    /// (⌘W still closes the window); Escape cancels; a reserved key is
-    /// refused and the row keeps waiting.
+    /// (⌘W still closes the window); Escape cancels; Delete clears a gamepad
+    /// binding; a reserved key is refused and the row keeps waiting.
     func captureKey(_ keyCode: UInt16, command: Bool) -> Bool {
+        if let control = capturingGamepad {
+            if command {
+                cancelCapture()
+                return false
+            }
+            if keyCode == UInt16(kVK_Escape) {
+                cancelCapture()
+                return true
+            }
+            if keyCode == UInt16(kVK_Delete) || keyCode == UInt16(kVK_ForwardDelete) {
+                gamepadBindings.unbind(control)
+                cancelCapture()
+                releaseAllKeys()
+                return true
+            }
+            return true
+        }
         guard let control = capturing else { return false }
         if command {
             cancelCapture()
@@ -2106,10 +2199,48 @@ public final class EmulatorViewModel {
         return true
     }
 
+    @discardableResult
+    func captureGamepadInput(_ input: GamepadInput) -> Bool {
+        guard let control = capturingGamepad else { return false }
+        gamepadBindings.assign(input, to: control)
+        cancelCapture()
+        releaseAllKeys()
+        return true
+    }
+
     func restoreDefaultKeyBindings() {
         cancelCapture()
         keyBindings.restoreDefaults()
         releaseAllKeys()
+    }
+
+    func restoreDefaultGamepadBindings() {
+        cancelCapture()
+        gamepadBindings.restoreDefaults()
+        releaseAllKeys()
+    }
+
+    private func syncControllerRouting() {
+        let routing = resolvedControllerRouting
+        let previous = lastRouting
+        lastRouting = routing
+        if previous.port1Controller != routing.port1Controller
+            || previous.port1Keyboard != routing.port1Keyboard {
+            for game in games { game.releaseAllKeys(port: 0) }
+            if previous.port1Controller != routing.port1Controller {
+                haptics[0].release()
+            }
+        }
+        if previous.port2Controller != routing.port2Controller {
+            for game in games { game.releaseAllKeys(port: 1) }
+            haptics[1].release()
+        }
+        if previous.port2Connected != routing.port2Connected {
+            for game in games {
+                game.port2ConnectionChanged(routing.port2Connected)
+            }
+        }
+        driveHaptics()
     }
 
     /// A key held across a rebind would be released through its NEW button
@@ -2256,6 +2387,8 @@ public final class EmulatorViewModel {
             let departed = (note.object as? GCController).map(ObjectIdentifier.init)
             MainActor.assumeIsolated { self?.controllerDisconnected(departed) }
         }
+        connectedControllers = ConnectedController.live()
+        lastRouting = resolvedControllerRouting
         bindConnectedControllers()
     }
 
@@ -2264,12 +2397,21 @@ public final class EmulatorViewModel {
     /// released when the pad that sent it leaves, whether or not another
     /// remains; an idle pad leaving changes nothing.
     private func controllerDisconnected(_ departed: ObjectIdentifier?) {
-        if haptics.controllerDisconnected(departed) { releaseAllKeys() }
+        if let departed {
+            lastGamepadPressed.removeValue(forKey: ConnectedController.id(for: departed))
+        }
+        connectedControllers = ConnectedController.live()
+        controllerAssignment.pruneDisconnected(connected: connectedControllers)
+        if haptics[0].controllerDisconnected(departed) { game?.releaseAllKeys(port: 0) }
+        if haptics[1].controllerDisconnected(departed) { game?.releaseAllKeys(port: 1) }
+        syncControllerRouting()
         game?.showNotice(NoticeIcon.controller, "Controller disconnected")
     }
 
     private func controllerConnected() {
+        connectedControllers = ConnectedController.live()
         bindConnectedControllers()
+        syncControllerRouting()
         game?.showNotice(NoticeIcon.controller, "Controller connected")
     }
 
@@ -2282,47 +2424,50 @@ public final class EmulatorViewModel {
     private func bind(_ pad: GCExtendedGamepad) {
         pad.valueChangedHandler = { [weak self] pad, _ in
             // Read the pad on the handler's own queue and send only the
-            // resulting mask across: InputMap is a UInt16 in a struct, so it
-            // crosses freely where the pad itself cannot.
-            var m = InputMap()
-            if pad.dpad.up.isPressed    { m.press(.up) }
-            if pad.dpad.down.isPressed  { m.press(.down) }
-            if pad.dpad.left.isPressed  { m.press(.left) }
-            if pad.dpad.right.isPressed { m.press(.right) }
-            if pad.buttonA.isPressed    { m.press(.cross) }
-            if pad.buttonB.isPressed    { m.press(.circle) }
-            if pad.buttonX.isPressed    { m.press(.square) }
-            if pad.buttonY.isPressed    { m.press(.triangle) }
-            if pad.leftShoulder.isPressed  { m.press(.l1) }
-            if pad.rightShoulder.isPressed { m.press(.r1) }
-            if pad.leftTrigger.isPressed   { m.press(.l2) }
-            if pad.rightTrigger.isPressed  { m.press(.r2) }
-            if pad.buttonMenu.isPressed    { m.press(.start) }
-            if pad.buttonOptions?.isPressed == true { m.press(.select) }
-            if pad.leftThumbstickButton?.isPressed == true  { m.press(.l3) }
-            if pad.rightThumbstickButton?.isPressed == true { m.press(.r3) }
-            m.sticks = Sticks(leftX: pad.leftThumbstick.xAxis.value,
-                              leftY: pad.leftThumbstick.yAxis.value,
-                              rightX: pad.rightThumbstick.xAxis.value,
-                              rightY: pad.rightThumbstick.yAxis.value)
-
-            let snapshot = m
+            // resulting snapshot across: GamepadSnapshot is a Sendable value
+            // type, so it crosses freely where the pad itself cannot.
+            let snapshot = GamepadSnapshot(gamepad: pad)
             let source = pad.controller.map(ObjectIdentifier.init)
+            let controllerID = source.map(ConnectedController.id(for:))
             MainActor.assumeIsolated {
-                self?.applyPadInput(snapshot)
-                if let source { self?.haptics.noteInput(from: source) }
+                guard let self, let controllerID else { return }
+                self.handleGamepadSnapshot(snapshot, from: controllerID, objectID: source)
             }
         }
         // Home opens the pause menu, as the PS button opens a console's;
         // Analog is in its Quick Settings. The system takes Home for its own
         // overlay unless told not to.
         if let home = pad.buttonHome {
+            let controllerID = pad.controller.map(ConnectedController.id(for:))
             home.preferredSystemGestureState = .disabled
             home.pressedChangedHandler = { [weak self] _, _, pressed in
                 guard pressed else { return }
-                MainActor.assumeIsolated { self?.game?.homePressed() }
+                MainActor.assumeIsolated {
+                    guard let self, let controllerID,
+                          self.resolvedControllerRouting.port(for: controllerID) != nil else { return }
+                    self.game?.homePressed()
+                }
             }
         }
+    }
+
+    private func handleGamepadSnapshot(_ snapshot: GamepadSnapshot, from controllerID: String,
+                                       objectID: ObjectIdentifier?) {
+        let previous = lastGamepadPressed[controllerID] ?? []
+        lastGamepadPressed[controllerID] = snapshot.pressed
+        let newlyPressed = snapshot.pressed.subtracting(previous)
+        if capturingGamepad != nil {
+            if let input = GamepadInput.allCases.first(where: { newlyPressed.contains($0) }) {
+                captureGamepadInput(input)
+            }
+            return
+        }
+        guard let port = resolvedControllerRouting.port(for: controllerID) else { return }
+        let mapped = gamepadBindings.map(snapshot)
+        applyPadInput(mapped.input, port: port,
+                      analogPressed: mapped.analogPressed,
+                      rewindPressed: mapped.rewindPressed)
+        if let objectID { haptics[port].noteInput(from: objectID) }
     }
 
     /// Shared by the real `GCExtendedGamepad` handler above and, in DEBUG
@@ -2335,8 +2480,10 @@ public final class EmulatorViewModel {
     /// but the handler still fires on every value change, so the next report
     /// of the still-held button overwrites `input` again before the next game
     /// even starts.
-    private func applyPadInput(_ snapshot: InputMap) {
-        game?.applyPadInput(snapshot)
+    private func applyPadInput(_ snapshot: InputMap, port: Int = 0,
+                               analogPressed: Bool = false, rewindPressed: Bool = false) {
+        game?.applyPadInput(snapshot, port: port,
+                            analogPressed: analogPressed, rewindPressed: rewindPressed)
     }
 
     // MARK: Helpers

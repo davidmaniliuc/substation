@@ -284,6 +284,18 @@ enum SettingsCopy {
         title: "Vibration"
     )
 
+    static let port1Controller = SettingInfo(
+        title: "Port 1",
+        description: "Automatic uses the keyboard and the first connected controller."
+    )
+
+    static let port2Controller = SettingInfo(
+        title: "Port 2",
+        description: "Automatic connects a second controller, or the first when Port 1 uses the keyboard only."
+    )
+
+    static let gamepadMappingFooter = "Click a button, then press a controller button to rebind it. Press Delete to clear."
+
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
@@ -293,12 +305,13 @@ enum SettingsCopy {
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, quitGameKey, controllers, pauseMenuKey, vibration,
+        port1Controller, port2Controller,
     ]
 
     static var allText: [String] {
         allInfo.flatMap(\.allText)
             + DitherMode.allCases.map(ditherOptionTitle)
             + Deinterlacing.allCases.map(\.title)
-            + [savingFooter, pgxpOffFooter, vramReadbacksNoGameFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
+            + [savingFooter, pgxpOffFooter, vramReadbacksNoGameFooter, gamepadMappingFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }

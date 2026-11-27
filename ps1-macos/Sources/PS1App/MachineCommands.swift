@@ -22,6 +22,8 @@ struct MachineCommands: Commands {
             Button("Toggle Analog") { game?.toggleAnalog() }
                 .keyboardShortcut("a", modifiers: [.command, .option])
                 .disabled(game == nil || game?.isPaused == true || model.isDialogShown)
+            Button("Toggle Port 2 Analog") { game?.toggleAnalog(port: 1) }
+                .disabled(game == nil || game?.isPaused == true || model.isDialogShown || !model.port2Connected)
             Button("Quit Game") { model.eject() }
                 .keyboardShortcut("e")
 

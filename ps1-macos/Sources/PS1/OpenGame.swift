@@ -71,10 +71,10 @@ final class OpenGame: Identifiable {
     /// Fed every controller report, so a button held as a surface opens does
     /// not fire on the surface's first report.
     private var padEdges = PadEdges()
-    /// The Analog mode Quick Settings asked for, pressed when the menu
+    /// The Analog mode Quick Settings asked for per port, pressed when the menu
     /// closes: the pad acts on its Analog button only while the game runs,
     /// and two presses queued while paused would read as one.
-    private var pendingAnalog: Bool?
+    private var pendingAnalog: [Bool?] = [nil, nil]
 
     /// The last pointer position the view reported. `nil` until the mouse has
     /// been over the window at all, so the very first hover counts as a move.
@@ -94,13 +94,15 @@ final class OpenGame: Identifiable {
     /// undone, auto-saved, or why a load was refused) and a disc swap.
     private(set) var notice: Notice?
     private var noticeTask: Task<Void, Never>?
-    /// The mode last seen, so only a CHANGE shows the notice. Each new
-    /// session starts from a digital pad.
-    private var lastPadAnalog = false
-    /// The pad's status as last sent, which the rumble gate re-drives on its
-    /// own: once frames stop the pad sends nothing, and a pause must still
+    /// The mode last seen per port, so only a CHANGE shows the notice. Each new
+    /// session starts from digital pads.
+    private var lastPadAnalog = [false, false]
+    /// Each port's pad status as last sent, which the rumble gate re-drives on
+    /// its own: once frames stop the pad sends nothing, and a pause must still
     /// still the motors.
-    private(set) var lastPadStatus = PadStatus.idle
+    private(set) var lastPadStatuses = [PadStatus.idle, PadStatus.idle]
+    var lastPadStatus: PadStatus { lastPadStatuses[0] }
+    func lastPadStatus(port: Int) -> PadStatus { lastPadStatuses[port] }
 
     /// True while the game is writing to a memory card, and for a moment
     /// after its last block: long enough to outlast the session's one-second
@@ -148,8 +150,10 @@ final class OpenGame: Identifiable {
     /// no repeat and starts from this.
     private var lastRewindSeconds: Double = 0
 
-    /// The pad as this game sees it, keyboard and controller together.
-    private var input = InputMap()
+    /// Each port's pad state as this game sees it.
+    private var inputs = [InputMap(), InputMap()]
+    /// Edge state for a gamepad-bound Analog button on each port.
+    private var analogHeldByPad = [false, false]
 
     init(app: EmulatorViewModel, session: (any GameSession)?, hostView: SessionHostView?,
          inOwnWindow: Bool, fullScreen: Bool) {
@@ -522,7 +526,7 @@ final class OpenGame: Identifiable {
         // Its pause goes with it.
         _ = surfaces.closeAll()
         saveStatesNav = nil
-        pendingAnalog = nil
+        pendingAnalog = [nil, nil]
         // Banks the session under this game before the session goes.
         isPaused = true
         hideTask?.cancel()
@@ -542,7 +546,8 @@ final class OpenGame: Identifiable {
         outgoing?.free()
         // After the pause above banked the last stretch into the stats.
         sessionBanked = 0
-        input.reset()
+        inputs = [InputMap(), InputMap()]
+        analogHeldByPad = [false, false]
         rewindHeldByKey = false
         rewindHeldByPad = false
         isRewinding = false
@@ -561,7 +566,8 @@ final class OpenGame: Identifiable {
 
     func sessionEvent(_ event: SessionEvent) {
         switch event {
-        case .pad(let s): padStatusChanged(s)
+        case .pad(let s): padStatusChanged(s, port: 0)
+        case .pad2(let s): padStatusChanged(s, port: 1)
         case .cardWrites(let n): memoryCardWritesChanged(n)
         case .rewindSeconds(let seconds):
             lastRewindSeconds = seconds
@@ -580,13 +586,30 @@ final class OpenGame: Identifiable {
         }
     }
 
-    private func padStatusChanged(_ s: PadStatus) {
-        if s.analog != lastPadAnalog {
-            lastPadAnalog = s.analog
-            showNotice(NoticeIcon.analog, s.analog ? "Analog on" : "Analog off")
+    private func padStatusChanged(_ s: PadStatus, port: Int) {
+        if s.analog != lastPadAnalog[port] {
+            lastPadAnalog[port] = s.analog
+            let prefix = port == 0 ? "" : "Port 2: "
+            showNotice(NoticeIcon.analog, "\(prefix)\(s.analog ? "Analog on" : "Analog off")")
         }
-        lastPadStatus = s
+        lastPadStatuses[port] = s
         app.driveHaptics()
+    }
+
+    /// Updates Port 2's connection in the session and clears its cached pad
+    /// state when unplugged.
+    func port2ConnectionChanged(_ connected: Bool) {
+        session?.setPortConnected(1, connected)
+        if !connected {
+            inputs[1].reset()
+            analogHeldByPad[1] = false
+            pendingAnalog[1] = nil
+            lastPadAnalog[1] = false
+            lastPadStatuses[1] = .idle
+            session?.setPortButtons(1, inputs[1].mask)
+            session?.setPortSticks(1, inputs[1].sticks)
+            app.driveHaptics()
+        }
     }
 
     private func memoryCardWritesChanged(_ writes: UInt64) {
@@ -641,7 +664,8 @@ final class OpenGame: Identifiable {
         guard isOpen(surface) != open else { return }
         if surface == .pauseMenu && open {
             menu.open(discCount: currentDiscs.count, insertedDisc: currentDiscIndex ?? 0,
-                      pgxpLocked: app.pgxpPresetDecides(\.enabled))
+                      pgxpLocked: app.pgxpPresetDecides(\.enabled),
+                      port2Connected: app.port2Connected)
         }
         if surface == .saveStates && !open { saveStatesNav = nil }
         let pause = surfaces.set(surface, open: open, paused: isPaused)
@@ -684,7 +708,7 @@ final class OpenGame: Identifiable {
     /// with them the pause they held.
     func closeAllSurfaces() {
         saveStatesNav = nil
-        pendingAnalog = nil
+        pendingAnalog = [nil, nil]
         apply(surfaces.closeAll())
     }
 
@@ -730,7 +754,8 @@ final class OpenGame: Identifiable {
         case .adjust(let setting, let delta): adjust(setting, by: delta)
         case .toggle(.volume): app.toggleMute()
         case .toggle(.pgxp): app.pgxpEnabled.toggle()
-        case .toggle(.analog): pendingAnalog = !analogShown
+        case .toggle(.analog): pendingAnalog[0] = !analogShown(port: 0)
+        case .toggle(.analog2): pendingAnalog[1] = !analogShown(port: 1)
         case .toggle(.speed), .toggle(.resolution): break
         case .insertDisc(let index):
             setSurface(.pauseMenu, open: false)
@@ -777,7 +802,9 @@ final class OpenGame: Identifiable {
 
     /// What the menu's Analog switch shows: the mode asked for while the
     /// menu is up, else the pad's own.
-    var analogShown: Bool { pendingAnalog ?? lastPadAnalog }
+    var analogShown: Bool { analogShown(port: 0) }
+
+    func analogShown(port: Int) -> Bool { pendingAnalog[port] ?? lastPadAnalog[port] }
 
     /// ← and → on the menu's settings. Left is down or Off, right is up or
     /// On; none of them wraps.
@@ -792,16 +819,21 @@ final class OpenGame: Identifiable {
         case .pgxp:
             app.pgxpEnabled = delta > 0
         case .analog:
-            pendingAnalog = delta > 0
+            pendingAnalog[0] = delta > 0
+        case .analog2:
+            pendingAnalog[1] = delta > 0
         case .volume:
             app.volume = ((app.volume * 10).rounded() + Double(delta)) / 10
         }
     }
 
     private func pressPendingAnalog() {
-        defer { pendingAnalog = nil }
-        guard let wanted = pendingAnalog, wanted != lastPadAnalog else { return }
-        session?.pressAnalog()
+        let wanted = pendingAnalog
+        pendingAnalog = [nil, nil]
+        if let p0 = wanted[0], p0 != lastPadAnalog[0] { session?.pressAnalog() }
+        if app.port2Connected, let p1 = wanted[1], p1 != lastPadAnalog[1] {
+            session?.pressPortAnalog(1)
+        }
     }
 
     private func apply(_ pause: Bool?) {
@@ -854,10 +886,21 @@ final class OpenGame: Identifiable {
 
     /// A key held across a rebind would be released through its NEW button
     /// and leave the old one stuck down.
-    func releaseAllKeys() {
-        input.reset()
-        session?.setButtons(input.mask)
-        session?.setSticks(input.sticks)
+    func releaseAllKeys(port: Int? = nil) {
+        if port == nil || port == 0 {
+            inputs[0].reset()
+            analogHeldByPad[0] = false
+            session?.setButtons(inputs[0].mask)
+            session?.setSticks(inputs[0].sticks)
+        }
+        if port == nil || port == 1 {
+            inputs[1].reset()
+            analogHeldByPad[1] = false
+            if app.port2Connected || port == 1 {
+                session?.setPortButtons(1, inputs[1].mask)
+                session?.setPortSticks(1, inputs[1].sticks)
+            }
+        }
     }
 
     /// `isRepeat` is the system's key repeat: Analog is an event, not a held
@@ -879,10 +922,12 @@ final class OpenGame: Identifiable {
         guard let c = app.keyBindings.control(forKey: keyCode) else { return false }
         switch c {
         case .button(let b):
-            input.press(b)
-            session?.setButtons(input.mask)
+            guard app.port1UsesKeyboard else { return false }
+            inputs[0].press(b)
+            session?.setButtons(inputs[0].mask)
         case .analog:
-            if !isRepeat { toggleAnalog() }
+            guard app.port1UsesKeyboard else { return false }
+            if !isRepeat { toggleAnalog(port: 0) }
         case .rewind:
             rewindHeldByKey = true
             updateRewinding()
@@ -898,8 +943,10 @@ final class OpenGame: Identifiable {
         guard let c = app.keyBindings.control(forKey: keyCode) else { return false }
         switch c {
         case .button(let b):
-            input.release(b)
-            session?.setButtons(input.mask)
+            let wasPressed = (inputs[0].mask & b.rawValue) == 0
+            guard app.port1UsesKeyboard || wasPressed else { return false }
+            inputs[0].release(b)
+            session?.setButtons(inputs[0].mask)
         case .analog:
             break   // the press is the event
         case .rewind:
@@ -909,43 +956,68 @@ final class OpenGame: Identifiable {
         return true
     }
 
-    /// The pad's Analog button: from a bound key or
-    /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
-    func toggleAnalog() {
+    /// The pad's Analog button: from a bound key, a bound controller button,
+    /// or Machine ▸ Toggle Analog. The pad decides whether it takes effect.
+    func toggleAnalog(port: Int = 0) {
         guard !isPaused, !app.isDialogShown else { return }
-        session?.pressAnalog()
+        if port == 0 {
+            session?.pressAnalog()
+        } else if port == 1 && app.port2Connected {
+            session?.pressPortAnalog(1)
+        }
     }
 
-    /// One controller report. While a surface holds the game paused, the
-    /// report drives the surface by its edges and the game sees the pad let
-    /// go; otherwise it is the game's, minus the rewind button.
-    func applyPadInput(_ snapshot: InputMap) {
-        let moves = padEdges.moves(for: snapshot)
-        if surfaces.pausesGame {
-            for move in moves { surfaceMove(move) }
-            input = InputMap()
-            session?.setButtons(input.mask)
-            session?.setSticks(input.sticks)
-            return
+    /// One controller report. While a surface holds the game paused, Port 1's
+    /// report drives the surface by its edges and the game sees both pads let
+    /// go; otherwise each port drives its own console port.
+    func applyPadInput(_ snapshot: InputMap, port: Int = 0,
+                       analogPressed: Bool = false, rewindPressed: Bool = false) {
+        if port == 0 {
+            let moves = padEdges.moves(for: snapshot)
+            if surfaces.pausesGame {
+                for move in moves { surfaceMove(move) }
+                analogHeldByPad[0] = false
+                inputs[0] = InputMap()
+                session?.setButtons(inputs[0].mask)
+                session?.setSticks(inputs[0].sticks)
+                return
+            }
+            let pad = app.rewindPadButton
+            let held = rewindPressed || pad.claims(snapshot)
+            if held != rewindHeldByPad {
+                rewindHeldByPad = held
+                updateRewinding()
+            }
+            if analogPressed && !analogHeldByPad[0] { toggleAnalog(port: 0) }
+            analogHeldByPad[0] = analogPressed
+            // The rewind button never reaches the game.
+            let game = pad.withheld(from: snapshot)
+            inputs[0] = game
+            session?.setButtons(game.mask)
+            session?.setSticks(game.sticks)
+        } else if port == 1 {
+            if surfaces.pausesGame {
+                analogHeldByPad[1] = false
+                inputs[1] = InputMap()
+                session?.setPortButtons(1, inputs[1].mask)
+                session?.setPortSticks(1, inputs[1].sticks)
+                return
+            }
+            if analogPressed && !analogHeldByPad[1] { toggleAnalog(port: 1) }
+            analogHeldByPad[1] = analogPressed
+            inputs[1] = snapshot
+            session?.setPortButtons(1, snapshot.mask)
+            session?.setPortSticks(1, snapshot.sticks)
         }
-        let pad = app.rewindPadButton
-        let held = pad.claims(snapshot)
-        if held != rewindHeldByPad {
-            rewindHeldByPad = held
-            updateRewinding()
-        }
-        // The rewind button never reaches the game.
-        let game = pad.withheld(from: snapshot)
-        input = game
-        session?.setButtons(game.mask)
-        session?.setSticks(game.sticks)
     }
 
     #if DEBUG
     /// Whether the idle timer will hide the HUD, without waiting it out.
     var hidePendingForTesting: Bool { hideTask.map { !$0.isCancelled } ?? false }
     var cardSavingTaskForTesting: Task<Void, Never>? { cardSavingTask }
-    var inputMaskForTesting: UInt16 { input.mask }
-    var sticksForTesting: Sticks { input.sticks }
+    var inputMaskForTesting: UInt16 { inputs[0].mask }
+    var sticksForTesting: Sticks { inputs[0].sticks }
+    func inputMaskForTesting(port: Int) -> UInt16 { inputs[port].mask }
+    func sticksForTesting(port: Int) -> Sticks { inputs[port].sticks }
     #endif
 }

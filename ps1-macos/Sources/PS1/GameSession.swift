@@ -130,6 +130,7 @@ struct SessionSettings: Equatable, Sendable {
 /// rate twice a second while the game runs.
 enum SessionEvent: Equatable, Sendable {
     case pad(PadStatus)
+    case pad2(PadStatus)
     /// The running count of the game's memory-card writes.
     case cardWrites(UInt64)
     case rewindSeconds(Double)
@@ -140,6 +141,8 @@ enum SessionEvent: Equatable, Sendable {
         switch e.kind {
         case PS1_EVENT_PAD:
             self = .pad(PadStatus(analog: e.pad.analog != 0, small: e.pad.small, large: e.pad.large))
+        case PS1_EVENT_PAD2:
+            self = .pad2(PadStatus(analog: e.pad.analog != 0, small: e.pad.small, large: e.pad.large))
         case PS1_EVENT_CARD_WRITE: self = .cardWrites(e.card_writes)
         case PS1_EVENT_REWIND: self = .rewindSeconds(e.value)
         case PS1_EVENT_FRAME_RATE: self = .frameRate(e.value)
@@ -160,6 +163,10 @@ protocol GameSession: AnyObject, Sendable {
     func setButtons(_ mask: UInt16)
     func setSticks(_ s: Sticks)
     func pressAnalog()
+    func setPortConnected(_ port: Int, _ connected: Bool)
+    func setPortButtons(_ port: Int, _ mask: UInt16)
+    func setPortSticks(_ port: Int, _ s: Sticks)
+    func pressPortAnalog(_ port: Int)
     func setSpeed(_ speed: Int)
     func setPaused(_ paused: Bool)
     func setRewinding(_ on: Bool)
@@ -340,6 +347,26 @@ final class Session: GameSession {
     func pressAnalog() {
         guard let handle else { return }
         ps1_session_press_analog(handle)
+    }
+
+    func setPortConnected(_ port: Int, _ connected: Bool) {
+        guard let handle else { return }
+        ps1_session_set_port_connected(handle, Int32(clamping: port), connected ? 1 : 0)
+    }
+
+    func setPortButtons(_ port: Int, _ mask: UInt16) {
+        guard let handle else { return }
+        ps1_session_set_port_buttons(handle, Int32(clamping: port), mask)
+    }
+
+    func setPortSticks(_ port: Int, _ s: Sticks) {
+        guard let handle else { return }
+        ps1_session_set_port_sticks(handle, Int32(clamping: port), s.lx, s.ly, s.rx, s.ry)
+    }
+
+    func pressPortAnalog(_ port: Int) {
+        guard let handle else { return }
+        ps1_session_press_port_analog(handle, Int32(clamping: port))
     }
 
     func setSpeed(_ speed: Int) {
