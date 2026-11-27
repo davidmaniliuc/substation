@@ -147,7 +147,7 @@ pub fn saveSio(cpu: *const Cpu, w: *Writer) Error!void {
     try w.flag(io.irq);
     try w.int(io.irq_timer);
     try w.int(io.port);
-    try savePad(&io.pad, w);
+    try savePad(&io.pads[0], w);
     for (0..Sio.memcard_slots) |i| {
         try w.array(&io.memcard_staging[i]);
         try w.int(io.memcard_address[i]);
@@ -157,6 +157,7 @@ pub fn saveSio(cpu: *const Cpu, w: *Writer) Error!void {
         try w.int(io.memcard_flag[i]);
         try w.int(io.memcard_status[i]);
     }
+    try savePad(&io.pads[1], w);
 }
 
 fn savePad(p: *const Pad, w: *Writer) Error!void {
@@ -198,7 +199,6 @@ fn loadPad(p: *Pad, r: *Reader) Error!void {
 }
 
 pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
-    _ = version;
     const io = &cpu.bus.sio;
     io.stat = try r.int(u32);
     io.mode = try r.int(u32);
@@ -210,7 +210,7 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     io.irq = try r.flag();
     io.irq_timer = try r.int(u32);
     io.port = try r.int(u1);
-    try loadPad(&io.pad, r);
+    try loadPad(&io.pads[0], r);
     for (0..Sio.memcard_slots) |i| {
         try r.array(&io.memcard_staging[i]);
         io.memcard_address[i] = try r.int(u16);
@@ -220,6 +220,11 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
         io.memcard_flag[i] = try r.int(u8);
         io.memcard_status[i] = try r.int(u8);
         if (io.memcard_step[i] > Sio.memcard_sector_bytes) return error.StateCorrupt;
+    }
+    if (version >= 3) {
+        try loadPad(&io.pads[1], r);
+    } else {
+        io.pads[1] = .{};
     }
     // The address holds the unmasked MSB until the LSB byte masks it, and an
     // abandoned packet leaves it that way, so only the states that index the
@@ -232,7 +237,7 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     // `step` indexes the 8-byte reply, so a packet in flight is bounded by
     // the only two lengths a reply has.
     if (io.ctrl_state == .Pad) {
-        const p = &io.pad;
+        const p = &io.pads[io.port];
         if (p.len != 4 and p.len != 8) return error.StateCorrupt;
         if (p.step >= p.len) return error.StateCorrupt;
         if (!Pad.isCommand(p.command)) return error.StateCorrupt;

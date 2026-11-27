@@ -129,7 +129,7 @@ fn buildFixtureMachine() anyerror!Machine {
 /// fixture exercises every field of the pad.
 fn buildV2FixtureMachine() anyerror!Machine {
     var m = try buildFixtureMachine();
-    const p = &m.bus.sio.pad;
+    const p = &m.bus.sio.pads[0];
     p.config = true;
     p.dualshock = true;
     p.rumble_map[0] = 0x00;
@@ -203,4 +203,25 @@ test "the committed v4 state still loads, into exactly the machine that wrote it
     try savestate.load(&got.cpu, file);
     try std.testing.expectEqual(state_hash.hashStatic(want.bus), state_hash.hashStatic(got.bus));
     try std.testing.expect(got.bus.expansion_3_written);
+}
+
+test "port 2 pad state round-trips through a savestate with identical hash" {
+    const zeros: [512 * 1024]u8 = @splat(0);
+    var a = try Machine.init(&zeros);
+    defer a.deinit();
+    a.bus.sio.setPadConnected(1, true);
+    a.bus.sio.pads[1].analog = true;
+    a.bus.sio.pads[1].dualshock = true;
+    a.bus.sio.pads[1].sticks = .{ 0x10, 0x20, 0x30, 0x40 };
+    a.bus.sio.pads[1].motor_small = 255;
+    a.bus.sio.pads[1].motor_large = 0x77;
+
+    const state = try a.saveAlloc();
+    defer std.testing.allocator.free(state);
+
+    var b = try Machine.init(&zeros);
+    defer b.deinit();
+    b.bus.sio.setPadConnected(1, true);
+    try savestate.load(&b.cpu, state);
+    try std.testing.expectEqualSlices(u64, &a.hashes(), &b.hashes());
 }

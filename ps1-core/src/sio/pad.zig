@@ -1,4 +1,4 @@
-//! The controller in port 1: a DualShock, which powers up as a plain digital
+//! A controller in a JOY port: a DualShock, which powers up as a plain digital
 //! pad.
 //!
 //! A packet is the command byte and up to seven more. Every reply is decided

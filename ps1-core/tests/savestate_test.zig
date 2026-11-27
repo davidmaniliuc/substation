@@ -282,23 +282,36 @@ test "sio section restores protocol state but never the card images" {
     io.irq = true;
     io.irq_timer = 450;
     io.port = 1;
-    const p = &io.pad;
-    p.buttons = 0xFFFE;
-    p.sticks = .{ 1, 2, 3, 4 };
-    p.analog = true;
-    p.config = true;
-    p.dualshock = true;
-    p.locked = true;
-    p.status = 0x00;
-    p.rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
-    p.motor_small = 255;
-    p.motor_large = 6;
-    p.toggle_queued = true;
-    p.command = 0x42;
-    p.tx = .{ 0xF3, 0x5A, 1, 2, 3, 4, 5, 6 };
-    p.rx = .{ 0x42, 0, 9, 8, 7, 0, 0, 0 };
-    p.step = 5;
-    p.len = 8;
+    const p0 = &io.pads[0];
+    p0.buttons = 0xFFFE;
+    p0.sticks = .{ 1, 2, 3, 4 };
+    p0.analog = true;
+    p0.config = true;
+    p0.dualshock = true;
+    p0.locked = true;
+    p0.status = 0x00;
+    p0.rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
+    p0.motor_small = 255;
+    p0.motor_large = 6;
+    p0.toggle_queued = true;
+    p0.command = 0x42;
+    p0.tx = .{ 0xF3, 0x5A, 1, 2, 3, 4, 5, 6 };
+    p0.rx = .{ 0x42, 0, 9, 8, 7, 0, 0, 0 };
+    p0.step = 5;
+    p0.len = 8;
+    const p1 = &io.pads[1];
+    p1.buttons = 0xFFF7;
+    p1.sticks = .{ 5, 6, 7, 8 };
+    p1.analog = true;
+    p1.dualshock = true;
+    p1.rumble_map = .{ 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF };
+    p1.motor_small = 255;
+    p1.motor_large = 0x40;
+    p1.command = 0x42;
+    p1.tx = .{ 0x73, 0x5A, 0xF7, 0xFF, 5, 6, 7, 8 };
+    p1.rx = .{ 0x42, 0, 0, 0, 0, 0, 0, 0 };
+    p1.step = 2;
+    p1.len = 8;
     io.memcard_staging[1][7] = 0x77;
     io.memcard_address[1] = 0x3F;
     io.memcard_checksum[1] = 0x12;
@@ -322,7 +335,8 @@ test "sio section restores protocol state but never the card images" {
     try std.testing.expectEqual(io.irq, got.irq);
     try std.testing.expectEqual(io.irq_timer, got.irq_timer);
     try std.testing.expectEqual(io.port, got.port);
-    try std.testing.expectEqualDeep(io.pad, got.pad);
+    try std.testing.expectEqualDeep(io.pads[0], got.pads[0]);
+    try std.testing.expectEqualDeep(io.pads[1], got.pads[1]);
     try std.testing.expectEqualDeep(io.memcard_staging, got.memcard_staging);
     try std.testing.expectEqualDeep(io.memcard_address, got.memcard_address);
     try std.testing.expectEqualDeep(io.memcard_checksum, got.memcard_checksum);
@@ -338,26 +352,35 @@ test "an impossible pad packet is StateCorrupt" {
     var len = try Machine.init();
     defer len.deinit();
     len.bus.sio.ctrl_state = .Pad;
-    len.bus.sio.pad.command = 0x42;
-    len.bus.sio.pad.len = 5;
-    len.bus.sio.pad.step = 1;
+    len.bus.sio.pads[0].command = 0x42;
+    len.bus.sio.pads[0].len = 5;
+    len.bus.sio.pads[0].step = 1;
     try expectSavedStateRefused(&len);
 
     var step = try Machine.init();
     defer step.deinit();
     step.bus.sio.ctrl_state = .Pad;
-    step.bus.sio.pad.command = 0x42;
-    step.bus.sio.pad.len = 4;
-    step.bus.sio.pad.step = 4;
+    step.bus.sio.pads[0].command = 0x42;
+    step.bus.sio.pads[0].len = 4;
+    step.bus.sio.pads[0].step = 4;
     try expectSavedStateRefused(&step);
 
     var cmd = try Machine.init();
     defer cmd.deinit();
     cmd.bus.sio.ctrl_state = .Pad;
-    cmd.bus.sio.pad.command = 0x99;
-    cmd.bus.sio.pad.len = 4;
-    cmd.bus.sio.pad.step = 1;
+    cmd.bus.sio.pads[0].command = 0x99;
+    cmd.bus.sio.pads[0].len = 4;
+    cmd.bus.sio.pads[0].step = 1;
     try expectSavedStateRefused(&cmd);
+
+    var p2 = try Machine.init();
+    defer p2.deinit();
+    p2.bus.sio.port = 1;
+    p2.bus.sio.ctrl_state = .Pad;
+    p2.bus.sio.pads[1].command = 0x42;
+    p2.bus.sio.pads[1].len = 5;
+    p2.bus.sio.pads[1].step = 1;
+    try expectSavedStateRefused(&p2);
 }
 
 test "mdec section restores tables, fifos and the block in progress" {
@@ -1085,10 +1108,10 @@ test "a state saved mid-0x4D finishes the remap after a restore" {
     defer a.deinit();
     const sio = &a.bus.sio;
     // Config mode, small motor mapped and running.
-    sio.pad.config = true;
-    sio.pad.dualshock = true;
-    sio.pad.rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
-    sio.pad.motor_small = 255;
+    sio.pads[0].config = true;
+    sio.pads[0].dualshock = true;
+    sio.pads[0].rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
+    sio.pads[0].motor_small = 255;
     for ([_]u8{ 0x01, 0x4D, 0x00, 0xFF, 0x01 }) |b| sio.write(0, b); // three bytes into the remap
 
     const buf = try saveAlloc(&a);
@@ -1099,8 +1122,8 @@ test "a state saved mid-0x4D finishes the remap after a restore" {
 
     for ([_]u8{ 0xFF, 0xFF, 0xFF, 0xFF }) |x| b.bus.sio.write(0, x);
     try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, b.bus.sio.ctrl_state);
-    try std.testing.expectEqual(@as(u8, 0), b.bus.sio.pad.motor_small); // unmapped, stopped
-    try std.testing.expectEqual([6]u8{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, b.bus.sio.pad.rumble_map);
+    try std.testing.expectEqual(@as(u8, 0), b.bus.sio.pads[0].motor_small); // unmapped, stopped
+    try std.testing.expectEqual([6]u8{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, b.bus.sio.pads[0].rumble_map);
 }
 
 test "the state checksum is std.hash.Crc32's value on every path, length and alignment" {
@@ -1463,6 +1486,49 @@ test "a version-1 CPU section still loads" {
 
 test "a version-3 CPU section is refused" {
     const buf = try saveWithCpuVersion(3);
+    defer std.testing.allocator.free(buf);
+    try expectLoad(buf, error.StateVersion);
+}
+
+/// A whole state whose SIO section is written at `version`. A version-2
+/// section omits Port 2's Pad at the end of the SIO section (39 bytes).
+fn saveWithSioVersion(version: u32) ![]u8 {
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.sio.pads[0].analog = true;
+    a.bus.sio.pads[1].analog = true;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    const at = sectionOffset(buf, 9);
+    try std.testing.expectEqualSlices(u8, "SIO ", buf[at..][0..4]);
+    const len = std.mem.readInt(u32, buf[at + 8 ..][0..4], .little);
+
+    // Pad wire size: u16 + [4]u8 + 4*bool + u8 + [6]u8 + 2*u8 + bool + u8 + [8]u8 + [8]u8 + 2*u8 = 39 bytes.
+    const pad_bytes: usize = 39;
+    const drop: usize = if (version == 2) pad_bytes else 0;
+    const out = try std.testing.allocator.alloc(u8, buf.len - drop);
+    @memcpy(out, buf[0 .. buf.len - drop]);
+    std.mem.writeInt(u32, out[at + 4 ..][0..4], version, .little);
+    std.mem.writeInt(u32, out[at + 8 ..][0..4], @intCast(len - drop), .little);
+    reseal(out);
+    return out;
+}
+
+test "a version-2 SIO section still loads with port 2 at power-on default" {
+    const buf = try saveWithSioVersion(2);
+    defer std.testing.allocator.free(buf);
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.sio.pads[1].analog = true;
+    b.bus.sio.pads[1].motor_large = 0x80;
+    try savestate.load(&b.cpu, buf);
+    try std.testing.expect(b.bus.sio.pads[0].analog);
+    try std.testing.expectEqualDeep(ps1.sio.Pad{}, b.bus.sio.pads[1]);
+}
+
+test "a version-4 SIO section is refused" {
+    const buf = try saveWithSioVersion(4);
     defer std.testing.allocator.free(buf);
     try expectLoad(buf, error.StateVersion);
 }

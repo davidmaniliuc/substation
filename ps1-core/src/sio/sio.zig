@@ -84,6 +84,7 @@ pub const Sio = struct {
     /// Both controller/memory-card ports. JOY_CTRL bit 13 selects between
     /// them; a real console has two of each socket.
     pub const memcard_slots = 2;
+    pub const pad_ports = 2;
 
     const blank_card: [memcard_bytes]u8 = @splat(0);
 
@@ -145,8 +146,10 @@ pub const Sio = struct {
     /// Countdown, in `step()` calls, from a byte being clocked out to /ACK
     /// pulling the interrupt line low. See `ack_delay`.
     irq_timer: u32 = 0,
-    /// Port 1's controller. Port 2 has none.
-    pad: Pad = .{},
+    /// Both controller ports. Port 1 defaults connected, Port 2 disconnected
+    /// (host configuration, not part of a savestate).
+    pads: [pad_ports]Pad = .{ .{}, .{} },
+    pad_connected: [pad_ports]bool = .{ true, false },
 
     /// Which port the packet in flight is addressed to, sampled from JOY_CTRL
     /// bit 13 on the byte that OPENS the packet. Sampled once because the
@@ -222,23 +225,26 @@ pub const Sio = struct {
                         }
                     },
                     .AwaitingCmd => {
-                        // Port 2 has no pad in it. Falling through to .Idle is
-                        // the existing "nothing responded" path: no /ACK, no
-                        // IRQ7, and the BIOS routine times out and reports no
-                        // controller, which is what an empty socket does.
-                        if (p == 0 and self.pad.begin(tx)) {
-                            self.rx_data = self.pad.transfer(tx).out;
+                        // A disconnected socket falls through to .Idle: no
+                        // /ACK, no IRQ7, and the BIOS routine times out and
+                        // reports no controller, matching an empty socket.
+                        if (self.pad_connected[p] and self.pads[p].begin(tx)) {
+                            self.rx_data = self.pads[p].transfer(tx).out;
                             self.ctrl_state = .Pad;
                         } else {
-                            if (p == 0) self.pad.idle();
+                            if (self.pad_connected[p]) self.pads[p].idle();
                             self.ctrl_state = .Idle;
                         }
                     },
                     .Pad => {
-                        const r = self.pad.transfer(tx);
-                        self.rx_data = r.out;
-                        if (!r.more) {
-                            self.pad.idle();
+                        if (self.pad_connected[p]) {
+                            const r = self.pads[p].transfer(tx);
+                            self.rx_data = r.out;
+                            if (!r.more) {
+                                self.pads[p].idle();
+                                self.ctrl_state = .Idle;
+                            }
+                        } else {
                             self.ctrl_state = .Idle;
                         }
                     },
@@ -433,7 +439,7 @@ pub const Sio = struct {
                 // that stops early, or alternates between slots, re-enters
                 // mid-sequence and desynchronises permanently.
                 if ((value & (1 << 1)) == 0) {
-                    self.pad.idle();
+                    for (&self.pads) |*pad| pad.idle();
                     self.ctrl_state = .Idle;
                 }
 
@@ -444,7 +450,7 @@ pub const Sio = struct {
                     self.ctrl = 0;
                     self.baud = 0;
                     self.rx_data = 0xFF;
-                    self.pad.idle();
+                    for (&self.pads) |*pad| pad.idle();
                     self.ctrl_state = .Idle;
                     self.ack = false;
                     self.irq = false;
@@ -480,7 +486,33 @@ pub const Sio = struct {
     }
 
     pub fn setButtons(self: *Self, buttons: u16) void {
-        self.pad.buttons = buttons;
+        self.setPortButtons(0, buttons);
+    }
+
+    pub fn setPortButtons(self: *Self, port: u1, buttons: u16) void {
+        self.pads[port].buttons = buttons;
+    }
+
+    pub fn setPortAnalog(self: *Self, port: u1, lx: u8, ly: u8, rx: u8, ry: u8) void {
+        self.pads[port].setSticks(lx, ly, rx, ry);
+    }
+
+    pub fn pressPortAnalogButton(self: *Self, port: u1) void {
+        self.pads[port].pressAnalogButton();
+    }
+
+    /// Plugs or unplugs a controller. Idempotent: re-applying the current
+    /// connection state leaves the pad untouched. Unplugging powers that pad
+    /// down (digital, motors stopped) and aborts any transfer aimed at it.
+    pub fn setPadConnected(self: *Self, port: u1, connected: bool) void {
+        if (self.pad_connected[port] == connected) return;
+        self.pad_connected[port] = connected;
+        if (!connected) {
+            self.pads[port] = .{};
+            if ((self.ctrl_state == .AwaitingCmd or self.ctrl_state == .Pad) and self.port == port) {
+                self.ctrl_state = .Idle;
+            }
+        }
     }
 
     pub fn getMemoryCardData(self: *Self, slot: usize) []u8 {

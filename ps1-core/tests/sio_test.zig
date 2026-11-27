@@ -552,8 +552,8 @@ fn padPacket(bus: *Bus, bytes: []const u8, out: []u8, acks: []bool) void {
 test "an analog read is nine bytes: ID 0x73, 0x5A, buttons, then RX RY LX LY" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.sio.pad.analog = true;
-    bus.sio.pad.setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
+    bus.sio.pads[0].analog = true;
+    bus.sio.pads[0].setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
     bus.sio.setButtons(0xFFF7);
 
     var out: [9]u8 = undefined;
@@ -601,15 +601,15 @@ test "a button change mid-packet reaches the button bytes not yet sent" {
 test "a stick moved mid-packet reaches the analog bytes not yet sent" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.sio.pad.analog = true;
-    bus.sio.pad.setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
+    bus.sio.pads[0].analog = true;
+    bus.sio.pads[0].setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
     _ = xfer(bus, 0x01);
     _ = xfer(bus, 0x42);
     _ = xfer(bus, 0); // 0x5A
     _ = xfer(bus, 0); // buttons low
     _ = xfer(bus, 0); // buttons high
     try expectEqual(@as(u8, 0x30), xfer(bus, 0)); // RX already out
-    bus.sio.pad.setSticks(0x11, 0x21, 0x31, 0x41);
+    bus.sio.pads[0].setSticks(0x11, 0x21, 0x31, 0x41);
     try expectEqual(@as(u8, 0x41), xfer(bus, 0)); // RY
     try expectEqual(@as(u8, 0x11), xfer(bus, 0)); // LX
     try expectEqual(@as(u8, 0x21), xfer(bus, 0)); // LY
@@ -625,7 +625,7 @@ fn padCmd(bus: *Bus, cmd: u8, args: []const u8, reply: []u8) void {
 
 fn enterConfig(bus: *Bus) void {
     var r: [8]u8 = undefined;
-    const len: usize = if (bus.sio.pad.analog) 8 else 4;
+    const len: usize = if (bus.sio.pads[0].analog) 8 else 4;
     padCmd(bus, 0x43, &.{ 0x00, 0x01 }, r[0..len]);
 }
 
@@ -640,16 +640,16 @@ test "0x43 enters config: ID 0xF3 inside, and the pad is a DualShock from then o
     var r: [4]u8 = undefined;
     padCmd(bus, 0x43, &.{ 0x00, 0x01 }, &r);
     try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x5A, 0xFF, 0xFF }, &r); // answered as a read
-    try expect(bus.sio.pad.config);
-    try expect(bus.sio.pad.dualshock);
+    try expect(bus.sio.pads[0].config);
+    try expect(bus.sio.pads[0].dualshock);
 
     var r8: [8]u8 = undefined;
     padCmd(bus, 0x45, &.{}, &r8);
     try std.testing.expectEqualSlices(u8, &.{ 0xF3, 0x5A, 0x01, 0x02, 0x00, 0x02, 0x01, 0x00 }, &r8);
 
     leaveConfig(bus);
-    try expect(!bus.sio.pad.config);
-    try expect(bus.sio.pad.dualshock); // sticky
+    try expect(!bus.sio.pads[0].config);
+    try expect(bus.sio.pads[0].dualshock); // sticky
 }
 
 test "0x44 sets analog mode and the lock" {
@@ -659,8 +659,8 @@ test "0x44 sets analog mode and the lock" {
     var r: [8]u8 = undefined;
     padCmd(bus, 0x44, &.{ 0x00, 0x01, 0x03 }, &r);
     try std.testing.expectEqualSlices(u8, &.{ 0xF3, 0x5A, 0, 0, 0, 0, 0, 0 }, &r);
-    try expect(bus.sio.pad.analog);
-    try expect(bus.sio.pad.locked);
+    try expect(bus.sio.pads[0].analog);
+    try expect(bus.sio.pads[0].locked);
     leaveConfig(bus);
 
     var read: [8]u8 = undefined;
@@ -706,12 +706,12 @@ test "the Analog button toggles at the next idle, never mid-packet" {
     defer bus.deinit(std.testing.allocator);
     _ = xfer(bus, 0x01);
     try expectEqual(@as(u8, 0x41), xfer(bus, 0x42));
-    bus.sio.pad.pressAnalogButton();
+    bus.sio.pads[0].pressAnalogButton();
     _ = xfer(bus, 0x00);
     _ = xfer(bus, 0x00);
     _ = xfer(bus, 0x00); // a digital packet, finished as one
-    try expect(bus.sio.pad.analog); // applied at the packet's end
-    try expectEqual(@as(u8, 0x5A), bus.sio.pad.status); // never in config: no status change
+    try expect(bus.sio.pads[0].analog); // applied at the packet's end
+    try expectEqual(@as(u8, 0x5A), bus.sio.pads[0].status); // never in config: no status change
 
     var r: [8]u8 = undefined;
     padCmd(bus, 0x42, &.{}, &r);
@@ -723,7 +723,7 @@ test "after config mode, a toggle reports itself through status 0x00" {
     defer bus.deinit(std.testing.allocator);
     enterConfig(bus);
     leaveConfig(bus);
-    bus.sio.pad.pressAnalogButton();
+    bus.sio.pads[0].pressAnalogButton();
     bus.write16(JOY_CTRL, 0x0000); // deselect: idle
     var r: [8]u8 = undefined;
     padCmd(bus, 0x42, &.{}, &r);
@@ -738,10 +738,10 @@ test "a locked pad ignores the Analog button" {
     var r: [8]u8 = undefined;
     padCmd(bus, 0x44, &.{ 0x00, 0x00, 0x03 }, &r); // digital, locked
     leaveConfig(bus);
-    bus.sio.pad.pressAnalogButton();
+    bus.sio.pads[0].pressAnalogButton();
     bus.write16(JOY_CTRL, 0x0000);
-    try expect(!bus.sio.pad.analog);
-    try expect(!bus.sio.pad.toggle_queued); // dropped, not held for later
+    try expect(!bus.sio.pads[0].analog);
+    try expect(!bus.sio.pads[0].toggle_queued); // dropped, not held for later
 }
 
 test "a 0x43 cut short by a deselect leaves config mode as it was" {
@@ -753,8 +753,8 @@ test "a 0x43 cut short by a deselect leaves config mode as it was" {
     _ = xfer(bus, 0x00);
     _ = xfer(bus, 0x01); // the enter byte, but not the packet's last
     bus.write16(JOY_CTRL, 0x0000);
-    try expect(!bus.sio.pad.config);
-    try expect(!bus.sio.pad.dualshock);
+    try expect(!bus.sio.pads[0].config);
+    try expect(!bus.sio.pads[0].dualshock);
 }
 
 test "a leaving 0x43 cut short by a deselect stays in config mode" {
@@ -766,7 +766,7 @@ test "a leaving 0x43 cut short by a deselect stays in config mode" {
     _ = xfer(bus, 0x00);
     _ = xfer(bus, 0x00); // the leave byte, but not the packet's last
     bus.write16(JOY_CTRL, 0x0000);
-    try expect(bus.sio.pad.config);
+    try expect(bus.sio.pads[0].config);
 }
 
 test "config commands to port 2 get no /ACK and leave port 1's pad alone" {
@@ -778,7 +778,7 @@ test "config commands to port 2 get no /ACK and leave port 1's pad alone" {
         _ = xfer(bus, cmd);
         try expectEqual(@as(u32, 0), bus.read16Raw(JOY_STAT) & 0x80);
     }
-    try expectEqualDeep(ps1_core.sio.Pad{}, bus.sio.pad);
+    try expectEqualDeep(ps1_core.sio.Pad{}, bus.sio.pads[0]);
 }
 
 fn mapRumble(bus: *Bus, map: [6]u8, old: *[8]u8) void {
@@ -796,12 +796,12 @@ test "0x4D maps the motors, replies with the old map, and 0x42 then drives them"
     leaveConfig(bus);
 
     padCmd(bus, 0x42, &.{ 0x00, 0x01, 0xC0 }, &r); // TX byte 2 small, byte 3 large
-    try expectEqual(@as(u8, 255), bus.sio.pad.motor_small);
-    try expectEqual(@as(u8, 0xC0), bus.sio.pad.motor_large);
+    try expectEqual(@as(u8, 255), bus.sio.pads[0].motor_small);
+    try expectEqual(@as(u8, 0xC0), bus.sio.pads[0].motor_large);
 
     padCmd(bus, 0x42, &.{ 0x00, 0x00, 0x40 }, &r);
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
-    try expectEqual(@as(u8, 0x40), bus.sio.pad.motor_large);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
+    try expectEqual(@as(u8, 0x40), bus.sio.pads[0].motor_large);
 }
 
 test "unmapping a running motor stops it at the end of the 0x4D" {
@@ -815,8 +815,8 @@ test "unmapping a running motor stops it at the end of the 0x4D" {
     enterConfig(bus);
     mapRumble(bus, .{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r); // small unmapped
     try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, r[2..8]); // old map
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
-    try expectEqual(@as(u8, 0xC0), bus.sio.pad.motor_large);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
+    try expectEqual(@as(u8, 0xC0), bus.sio.pads[0].motor_large);
 }
 
 test "before config mode, the legacy encoding drives the small motor" {
@@ -824,12 +824,12 @@ test "before config mode, the legacy encoding drives the small motor" {
     defer bus.deinit(std.testing.allocator);
     var r: [4]u8 = undefined;
     padCmd(bus, 0x42, &.{ 0x00, 0x40, 0x01 }, &r);
-    try expectEqual(@as(u8, 255), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 255), bus.sio.pads[0].motor_small);
     try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x5A, 0xFF, 0xFF }, &r); // packet unchanged
     padCmd(bus, 0x42, &.{ 0x00, 0x40, 0x00 }, &r);
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
     padCmd(bus, 0x42, &.{ 0x00, 0x00, 0x01 }, &r);
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
 }
 
 test "a mode change stops both motors and unmaps them" {
@@ -840,9 +840,91 @@ test "a mode change stops both motors and unmaps them" {
     mapRumble(bus, .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r);
     leaveConfig(bus);
     padCmd(bus, 0x42, &.{ 0x00, 0x01, 0xC0 }, &r);
-    bus.sio.pad.pressAnalogButton();
+    bus.sio.pads[0].pressAnalogButton();
     bus.write16(JOY_CTRL, 0x0000);
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
-    try expectEqual(@as(u8, 0), bus.sio.pad.motor_large);
-    try expectEqual(@as([6]u8, @splat(0xFF)), bus.sio.pad.rumble_map);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_large);
+    try expectEqual(@as([6]u8, @splat(0xFF)), bus.sio.pads[0].rumble_map);
+}
+
+test "port 2 connected answers independently from port 1" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    bus.sio.setPadConnected(1, true);
+    bus.sio.setPortButtons(0, 0xFFF7); // Port 1 START
+    bus.sio.setPortButtons(1, 0xFFFE); // Port 2 SELECT
+
+    // Poll Port 2 digital.
+    selectPort(bus, 1);
+    var out2: [5]u8 = undefined;
+    var acks2: [5]bool = undefined;
+    padPacket(bus, &.{ 0x01, 0x42, 0, 0, 0 }, &out2, &acks2);
+    try std.testing.expectEqualSlices(u8, &.{ 0xFF, 0x41, 0x5A, 0xFE, 0xFF }, &out2);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true, false }, &acks2);
+
+    // Poll Port 1 digital: untouched.
+    selectPort(bus, 0);
+    var out1: [5]u8 = undefined;
+    var acks1: [5]bool = undefined;
+    padPacket(bus, &.{ 0x01, 0x42, 0, 0, 0 }, &out1, &acks1);
+    try std.testing.expectEqualSlices(u8, &.{ 0xFF, 0x41, 0x5A, 0xF7, 0xFF }, &out1);
+}
+
+test "port 2 has independent analog mode, sticks, config and rumble" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    bus.sio.setPadConnected(1, true);
+    bus.sio.setPortAnalog(1, 0x10, 0x20, 0x30, 0x40);
+
+    // Enter config on Port 2, enable analog, map rumble, leave config.
+    selectPort(bus, 1);
+    var r4: [4]u8 = undefined;
+    padCmd(bus, 0x43, &.{ 0x00, 0x01 }, &r4);
+    try expect(bus.sio.pads[1].config);
+    try expect(!bus.sio.pads[0].config);
+
+    var r8: [8]u8 = undefined;
+    padCmd(bus, 0x44, &.{ 0x00, 0x01, 0x02 }, &r8);
+    padCmd(bus, 0x4D, &.{ 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r8);
+    padCmd(bus, 0x43, &.{ 0x00, 0x00 }, &r8);
+
+    // Read Port 2 with rumble motors active.
+    padCmd(bus, 0x42, &.{ 0x00, 0x01, 0x90 }, &r8);
+    try std.testing.expectEqualSlices(u8, &.{ 0x73, 0x5A, 0xFF, 0xFF, 0x30, 0x40, 0x10, 0x20 }, &r8);
+    try expect(bus.sio.pads[1].analog);
+    try expectEqual(@as(u8, 255), bus.sio.pads[1].motor_small);
+    try expectEqual(@as(u8, 0x90), bus.sio.pads[1].motor_large);
+    // Port 1 remains digital and still.
+    try expect(!bus.sio.pads[0].analog);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pads[0].motor_large);
+
+    // Re-calling setPadConnected(1, true) is idempotent.
+    bus.sio.setPadConnected(1, true);
+    try expect(bus.sio.pads[1].analog);
+    try expectEqual(@as(u8, 0x90), bus.sio.pads[1].motor_large);
+
+    // Disconnecting Port 2 powers it down and stops motors.
+    bus.sio.setPadConnected(1, false);
+    try expect(!bus.sio.pads[1].analog);
+    try expectEqual(@as(u8, 0), bus.sio.pads[1].motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pads[1].motor_large);
+    // Port 2 stops answering again.
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x42);
+    try expectEqual(ps1_core.sio.Sio.SioState.Idle, bus.sio.ctrl_state);
+    try expect(!bus.sio.ack);
+}
+
+test "port 2 Analog button toggles on deselect without affecting port 1" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    bus.sio.setPadConnected(1, true);
+    bus.sio.pressPortAnalogButton(1);
+    bus.write16(JOY_CTRL, 0x0000); // deselect idles both ports
+    try expect(bus.sio.pads[1].analog);
+    try expect(!bus.sio.pads[0].analog);
 }

@@ -452,7 +452,7 @@ fn hashSio(bus: *const Bus) u64 {
     s.flag(io.irq);
     s.int(io.irq_timer);
     s.int(io.port);
-    hashPad(&s, &io.pad);
+    hashPad(&s, &io.pads[0]);
     for (0..ps1.sio.Sio.memcard_slots) |i| {
         s.bytes(&io.memcard_data[i]);
         s.bytes(&io.memcard_staging[i]);
@@ -464,6 +464,7 @@ fn hashSio(bus: *const Bus) u64 {
         s.int(io.memcard_flag[i]);
         s.int(io.memcard_status[i]);
     }
+    if (io.pad_connected[1]) hashPad(&s, &io.pads[1]);
     return s.final();
 }
 
